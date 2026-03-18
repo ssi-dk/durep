@@ -3,10 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, NamedTuple
-
-
-NodeType = Literal["file", "dir"]
+from typing import Any, NamedTuple, Literal
 
 
 class ParsedSizes(NamedTuple):
@@ -17,7 +14,7 @@ class ParsedSizes(NamedTuple):
 @dataclass(slots=True)
 class NcduNode:
     path: Path
-    node_type: NodeType
+    node_type: Literal["dir", "file"]
     apparent_size: int
     disk_size: int
     file_count: int
