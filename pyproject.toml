@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "durep"
+dynamic = ["version"]
+description = "<TODO: Add project description>"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "SSI-DK" },
+]
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-cov"]
+all = ["pytest", "pytest-cov"]
+
+[project.scripts]
+durep = "durep.cli:main"
+
+[project.urls]
+Homepage = "git@github.com:ssi-dk/durep.git"
+Repository = "git@github.com:ssi-dk/durep.git"
+
+[tool.hatch.version]
+path = "src/durep/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/durep"]
+
+[tool.ruff]
+line-length = 100

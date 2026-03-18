@@ -1,0 +1,38 @@
+{% set name = "durep" %}
+{% set data = load_file_regex(load_file=RECIPE_DIR + "/../src/durep/__init__.py", regex_pattern="__version__\\s*=\\s*['\"]([^'\"]+)['\"]") %}
+{% set version = data.group(1) %}
+
+package:
+  name: {{ name }}
+  version: {{ version }}
+
+source:
+  path: ..
+
+build:
+  number: 0
+  noarch: python
+  script: python -m pip install . -vv --no-deps --no-build-isolation
+
+requirements:
+  host:
+    - python >=3.10
+    - pip
+    - hatchling
+  run:
+    - python >=3.10
+
+test:
+  imports:
+    - durep
+
+about:
+  home: git@github.com:ssi-dk/durep.git
+  license: MIT
+  license_family: MIT
+  summary: <TODO: Add project description>
+  dev_url: git@github.com:ssi-dk/durep.git
+
+extra:
+  recipe-maintainers:
+    - Jakob Nybo Andersen
