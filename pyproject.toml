@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "durep"
 dynamic = ["version"]
-description = "<TODO: Add project description>"
+description = "Create interactive HTML reports of disk usage from ncdu JSON files"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [

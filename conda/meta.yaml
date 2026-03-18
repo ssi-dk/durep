@@ -30,7 +30,7 @@ about:
   home: git@github.com:ssi-dk/durep.git
   license: MIT
   license_family: MIT
-  summary: <TODO: Add project description>
+  summary: Create interactive HTML reports of disk usage from ncdu JSON files
   dev_url: git@github.com:ssi-dk/durep.git
 
 extra:
