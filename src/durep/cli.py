@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -13,6 +15,8 @@ from durep.analytics import (
 from durep.ncdu import parse_ncdu_json_file
 from durep.reports import render_text_report
 
+log = logging.getLogger("durep")
+
 
 @dataclass(slots=True)
 class CliArgs:
@@ -23,9 +27,7 @@ class CliArgs:
     max_depth: int
 
     @classmethod
-    def parse_cli_args(cls, argv: Sequence[str] | None = None) -> CliArgs:
-        parser = build_parser()
-        namespace = parser.parse_args(argv)
+    def from_namespace(cls, namespace: argparse.Namespace) -> CliArgs:
         return cls(
             current=Path(namespace.current),
             previous=Path(namespace.previous) if namespace.previous else None,
@@ -33,12 +35,6 @@ class CliArgs:
             top_n=namespace.top_n,
             max_depth=namespace.max_depth,
         )
-
-    @classmethod
-    def validated_from_cli_args(cls, argv: Sequence[str] | None = None) -> CliArgs:
-        instance = cls.parse_cli_args(argv)
-        instance.validate()
-        return instance
 
     def validate(self) -> None:
         require_file(self.current, "current")
@@ -76,6 +72,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=4,
         help="Maximum expansion depth used for drilldown datasets (default: 4).",
     )
+    parser.add_argument(
+        "--log-level",
+        default=None,
+        help="Log level (e.g. DEBUG, INFO, WARNING, ERROR, CRITICAL, or an integer)."
+        " Falls back to DUREP_LOG_LEVEL env var, then WARNING.",
+    )
     return parser
 
 
@@ -85,36 +87,85 @@ def require_file(path: Path, label: str) -> Path:
     return path
 
 
-def parse_and_validate_args(argv: Sequence[str] | None = None) -> CliArgs:
-    args = CliArgs.parse_cli_args(argv)
+def parse_log_level(raw: str) -> int:
+    raw = raw.strip()
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    name_map = logging.getLevelNamesMapping()
+    upper = raw.upper()
+    if upper in name_map:
+        return name_map[upper]
+    raise ValueError(f"invalid log level: {raw!r}")
+
+
+def configure_logging(cli_value: str | None) -> None:
+    raw = cli_value or os.environ.get("DUREP_LOG_LEVEL") or "WARNING"
+    try:
+        level = parse_log_level(raw)
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from None
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+
+def parse_and_validate_args(namespace: argparse.Namespace) -> CliArgs:
+    args = CliArgs.from_namespace(namespace)
     args.validate()
     return args
 
 
 def execute(args: CliArgs) -> None:
     out_dir = args.out_dir
-    out_dir.mkdir(parents=True, exist_ok=True)
+    if out_dir.exists():
+        raise FileExistsError(f"output directory already exists: {out_dir}")
+    out_dir.mkdir(parents=True)
+    log.info("Output directory: %s", out_dir)
 
+    log.info("Parsing current snapshot: %s", args.current)
     current_root = parse_ncdu_json_file(args.current)
+    log.debug(
+        "Current snapshot: %d files, %d directories",
+        current_root.total_files,
+        current_root.total_directories,
+    )
+
     previous_root = None
     if args.previous is not None:
+        log.info("Parsing previous snapshot: %s", args.previous)
         previous_root = parse_ncdu_json_file(args.previous)
+        log.debug(
+            "Previous snapshot: %d files, %d directories",
+            previous_root.total_files,
+            previous_root.total_directories,
+        )
 
+    log.debug("Computing uncompressed stats")
     uncompressed = compute_all_uncompressed_stats(current_root)
     metrics = compute_global_metrics(current_root, uncompressed)
 
     deltas = None
     if previous_root is not None:
+        log.debug("Computing directory deltas")
         deltas = compute_directory_deltas(current_root, previous_root)
+        log.info("Computed deltas for %d directories", len(deltas))
 
     text = render_text_report(current_root, metrics, deltas, args.top_n)
-    (out_dir / "text_report.txt").write_text(text, encoding="utf-8")
+    text_path = out_dir / "text_report.txt"
+    text_path.write_text(text, encoding="utf-8")
+    log.info("Wrote text report: %s", text_path)
 
     # TODO: render HTML report and write overall.html
 
 
 def run(argv: Sequence[str] | None = None) -> int:
-    args = parse_and_validate_args(argv)
+    namespace = build_parser().parse_args(argv)
+    configure_logging(namespace.log_level)
+    args = parse_and_validate_args(namespace)
     execute(args)
     return 0
 
@@ -122,10 +173,12 @@ def run(argv: Sequence[str] | None = None) -> int:
 def main(argv: Sequence[str] | None = None) -> None:
     parser = build_parser()
     try:
-        args = parse_and_validate_args(argv)
+        namespace = parser.parse_args(argv)
+        configure_logging(namespace.log_level)
+        args = parse_and_validate_args(namespace)
         execute(args)
         raise SystemExit(0)
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, FileExistsError) as exc:
         parser.exit(status=1, message=f"error: {exc}\n")
 
 
