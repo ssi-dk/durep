@@ -5,7 +5,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
+from durep.analytics import (
+    compute_all_uncompressed_stats,
+    compute_directory_deltas,
+    compute_global_metrics,
+)
 from durep.ncdu import parse_ncdu_json_file
+from durep.reports import render_text_report
 
 
 @dataclass(slots=True)
@@ -94,10 +100,17 @@ def execute(args: CliArgs) -> None:
     if args.previous is not None:
         previous_root = parse_ncdu_json_file(args.previous)
 
-    # TODO: run analytics (compute_global_metrics, build_drilldown_tree, etc.)
-    # TODO: render text report and HTML report via reports.py
-    # TODO: write overall.html and text_report.txt to out_dir
-    _ = current_root, previous_root  # suppress unused warnings until analytics is wired
+    uncompressed = compute_all_uncompressed_stats(current_root)
+    metrics = compute_global_metrics(current_root, uncompressed)
+
+    deltas = None
+    if previous_root is not None:
+        deltas = compute_directory_deltas(current_root, previous_root)
+
+    text = render_text_report(current_root, metrics, deltas, args.top_n)
+    (out_dir / "text_report.txt").write_text(text, encoding="utf-8")
+
+    # TODO: render HTML report and write overall.html
 
 
 def run(argv: Sequence[str] | None = None) -> int:
