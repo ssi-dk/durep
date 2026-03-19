@@ -600,13 +600,6 @@ function renderStackedArea(containerId, seriesData, formatBytes) {
   const values = seriesData.values;
   const measured = seriesData.measured;
 
-  // Build stacked data: array of {date, project1: bytes, project2: bytes, ...}
-  const tableData = dates.map((d, i) => {
-    const row = {date: d};
-    projects.forEach((p, j) => { row[p] = values[j][i]; });
-    return row;
-  });
-
   // Sort projects by absolute growth (smallest first = bottom of stack)
   const projectGrowth = projects.map((p, j) => {
     const vals = values[j];
@@ -617,64 +610,26 @@ function renderStackedArea(containerId, seriesData, formatBytes) {
   projectGrowth.sort((a, b) => a.absGrowth - b.absGrowth);
   const sortedProjects = projectGrowth.map(pg => pg.project);
 
-  const stack = d3.stack()
-    .keys(sortedProjects)
-    .order(d3.stackOrderNone)
-    .offset(d3.stackOffsetNone);
-
-  const stackedData = stack(tableData);
+  const color = d3.scaleOrdinal()
+    .domain(sortedProjects)
+    .range(d3.schemeTableau10.concat(d3.schemePaired));
 
   const x = d3.scaleTime()
     .domain(d3.extent(dates))
     .range([0, width]);
 
-  const y = d3.scaleLinear()
-    .domain([0, d3.max(stackedData, layer => d3.max(layer, d => d[1]))])
-    .nice()
-    .range([height, 0]);
-
-  const color = d3.scaleOrdinal()
-    .domain(sortedProjects)
-    .range(d3.schemeTableau10.concat(d3.schemePaired));
+  const y = d3.scaleLinear().range([height, 0]);
 
   const area = d3.area()
     .x((d, i) => x(dates[i]))
     .y0(d => y(d[0]))
     .y1(d => y(d[1]));
 
-  // Draw areas
-  svg.selectAll(".layer")
-    .data(stackedData)
-    .join("path")
-    .attr("class", "layer")
-    .attr("fill", d => color(d.key))
-    .attr("fill-opacity", 0.8)
-    .attr("d", area)
-    .append("title")
-    .text(d => d.key);
+  // Groups for layered drawing order
+  const areaGroup = svg.append("g");
+  const dotGroup = svg.append("g");
 
-  // Dots at measured (non-interpolated) points
-  stackedData.forEach(layer => {
-    const projKey = layer.key;
-    const pi = projects.indexOf(projKey);
-    const projMeasured = measured[pi];
-    // Build [{dateIdx, d}] for measured points with non-zero area
-    const dots = [];
-    layer.forEach((d, i) => {
-      if (projMeasured[i] && d[1] > d[0]) dots.push({i: i, d: d});
-    });
-    svg.selectAll(null)
-      .data(dots)
-      .join("circle")
-      .attr("cx", pt => x(dates[pt.i]))
-      .attr("cy", pt => y(pt.d[1]))
-      .attr("r", 3)
-      .attr("fill", color(projKey))
-      .attr("stroke", "#fff")
-      .attr("stroke-width", 0.5);
-  });
-
-  // Axes — adaptive tick resolution based on date span
+  // Axes
   const spanDays = (dates[dates.length - 1] - dates[0]) / (1000 * 60 * 60 * 24);
   let tickInterval, tickFmt;
   if (spanDays <= 30) {
@@ -695,19 +650,88 @@ function renderStackedArea(containerId, seriesData, formatBytes) {
     .attr("transform", "translate(0," + height + ")")
     .call(d3.axisBottom(x).ticks(tickInterval).tickFormat(tickFmt));
 
-  svg.append("g")
-    .call(d3.axisLeft(y).ticks(6).tickFormat(d => formatBytes(d)));
+  const yAxis = svg.append("g");
 
-  // Legend
+  // Hidden project tracking and redraw
+  const hidden = new Set();
+
+  function redraw() {
+    const visibleKeys = sortedProjects.filter(p => !hidden.has(p));
+
+    const tableData = dates.map((d, i) => {
+      const row = {date: d};
+      projects.forEach((p, j) => { row[p] = hidden.has(p) ? 0 : values[j][i]; });
+      return row;
+    });
+
+    const stack = d3.stack()
+      .keys(visibleKeys)
+      .order(d3.stackOrderNone)
+      .offset(d3.stackOffsetNone);
+
+    const stackedData = stack(tableData);
+
+    const yMax = d3.max(stackedData, layer => d3.max(layer, d => d[1])) || 0;
+    y.domain([0, yMax]).nice();
+    yAxis.transition().duration(300).call(d3.axisLeft(y).ticks(6).tickFormat(d => formatBytes(d)));
+
+    // Areas
+    const paths = areaGroup.selectAll("path").data(stackedData, d => d.key);
+    paths.exit().remove();
+    paths.enter().append("path")
+      .attr("fill", d => color(d.key))
+      .attr("fill-opacity", 0.8)
+      .merge(paths)
+      .transition().duration(300)
+      .attr("d", area);
+
+    // Dots
+    dotGroup.selectAll("*").remove();
+    stackedData.forEach(layer => {
+      const projKey = layer.key;
+      const pi = projects.indexOf(projKey);
+      const projMeasured = measured[pi];
+      const dots = [];
+      layer.forEach((d, i) => {
+        if (projMeasured[i] && d[1] > d[0]) dots.push({i: i, d: d});
+      });
+      dotGroup.selectAll(null)
+        .data(dots)
+        .join("circle")
+        .attr("cx", pt => x(dates[pt.i]))
+        .attr("cy", pt => y(pt.d[1]))
+        .attr("r", 3)
+        .attr("fill", color(projKey))
+        .attr("stroke", "#fff")
+        .attr("stroke-width", 0.5);
+    });
+  }
+
+  redraw();
+
+  // Legend (clickable)
   const legend = svg.append("g")
     .attr("transform", "translate(" + (width + 10) + ",0)");
 
   sortedProjects.slice().reverse().forEach((p, i) => {
     const g = legend.append("g")
-      .attr("transform", "translate(0," + (i * 20) + ")");
-    g.append("rect").attr("width", 14).attr("height", 14).attr("fill", color(p));
+      .attr("transform", "translate(0," + (i * 20) + ")")
+      .style("cursor", "pointer");
+    const swatch = g.append("rect").attr("width", 14).attr("height", 14).attr("fill", color(p));
     const label = p.length > 20 ? "..." + p.slice(-(20 - 3)) : p;
-    g.append("text").attr("x", 18).attr("y", 11).style("font-size", "11px").text(label);
+    const text = g.append("text").attr("x", 18).attr("y", 11).style("font-size", "11px").text(label);
+    g.on("click", function() {
+      if (hidden.has(p)) {
+        hidden.delete(p);
+        swatch.attr("fill-opacity", 1);
+        text.style("text-decoration", null).style("fill", null);
+      } else {
+        hidden.add(p);
+        swatch.attr("fill-opacity", 0.2);
+        text.style("text-decoration", "line-through").style("fill", "#999");
+      }
+      redraw();
+    });
   });
 
   // Tooltip
@@ -734,6 +758,7 @@ function renderStackedArea(containerId, seriesData, formatBytes) {
       const d = dates[idx];
       let html = "<strong>" + d3.timeFormat("%Y-%m-%d")(d) + "</strong><br>";
       sortedProjects.slice().reverse().forEach((p, j) => {
+        if (hidden.has(p)) return;
         const pi = sortedProjects.indexOf(p);
         const val = values[pi][idx];
         if (val > 0) {
