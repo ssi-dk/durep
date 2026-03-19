@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from durep.ncdu import NcduNode
+from durep.ncdu import NcduNode, NcduRun
 
 EXTENSIONS = {
     "fasta": ["fna", "faa", "fasta", "fa"],
@@ -363,3 +364,118 @@ def _build_delta_node(
         uncompressed=UncompressedStats.zero(),
         children=children,
     )
+
+
+# --- Overview (multi-project time series) ---
+
+
+@dataclass(slots=True)
+class ProjectSample:
+    project: str
+    timestamp: datetime.datetime
+    date: datetime.date
+    total_bytes: int
+    total_files: int
+    total_directories: int
+    uncompressed: UncompressedStats
+
+
+class ProjectTimeSeries:
+    __slots__ = ("project", "dates", "bytes_values", "uncompressed_values")
+
+    def __init__(
+        self,
+        project: str,
+        dates: list[datetime.date],
+        bytes_values: list[int],
+        uncompressed_values: list[UncompressedStats],
+    ) -> None:
+        if not (len(dates) == len(bytes_values) == len(uncompressed_values)):
+            raise ValueError(
+                f"ProjectTimeSeries list lengths must match: "
+                f"dates={len(dates)}, bytes_values={len(bytes_values)}, "
+                f"uncompressed_values={len(uncompressed_values)}"
+            )
+        self.project = project
+        self.dates = dates
+        self.bytes_values = bytes_values
+        self.uncompressed_values = uncompressed_values
+
+
+def extract_project_sample(run: NcduRun) -> ProjectSample:
+    if run.timestamp is None:
+        raise ValueError(f"scan for {run.root.path} has no timestamp; overview requires timestamps")
+    uncompressed = compute_all_uncompressed_stats(run.root)
+    return ProjectSample(
+        project=str(run.root.path),
+        timestamp=run.timestamp,
+        date=run.timestamp.date(),
+        total_bytes=run.root.total_bytes,
+        total_files=run.root.total_files,
+        total_directories=run.root.total_directories,
+        uncompressed=uncompressed[run.root.path],
+    )
+
+
+def build_overview_series(
+    samples: list[ProjectSample],
+) -> list[ProjectTimeSeries]:
+    if not samples:
+        return []
+
+    # Sort by timestamp so that within each project+day, the latest scan wins
+    sorted_samples = sorted(samples, key=lambda s: s.timestamp)
+
+    # Group by project; within each project, keep latest sample per day
+    by_project: dict[str, dict[datetime.date, ProjectSample]] = {}
+    for sample in sorted_samples:
+        day_map = by_project.setdefault(sample.project, {})
+        day_map[sample.date] = sample
+
+    # Build complete daily date range
+    all_dates: set[datetime.date] = set()
+    for day_map in by_project.values():
+        all_dates.update(day_map.keys())
+
+    min_date = min(all_dates)
+    max_date = max(all_dates)
+    date_range: list[datetime.date] = []
+    current = min_date
+    one_day = datetime.timedelta(days=1)
+    while current <= max_date:
+        date_range.append(current)
+        current += one_day
+
+    # Build time series per project with forward-fill, no backward-fill
+    result: list[ProjectTimeSeries] = []
+    for project in sorted(by_project):
+        day_map = by_project[project]
+        bytes_values: list[int] = []
+        uncompressed_values: list[UncompressedStats] = []
+        last_bytes: int | None = None
+        last_uncompressed: UncompressedStats | None = None
+
+        for date in date_range:
+            sample = day_map.get(date)
+            if sample is not None:
+                last_bytes = sample.total_bytes
+                last_uncompressed = sample.uncompressed
+            if last_bytes is None:
+                # No data yet for this project (before first appearance)
+                bytes_values.append(0)
+                uncompressed_values.append(UncompressedStats.zero())
+            else:
+                bytes_values.append(last_bytes)
+                assert last_uncompressed is not None
+                uncompressed_values.append(last_uncompressed)
+
+        result.append(
+            ProjectTimeSeries(
+                project=project,
+                dates=list(date_range),
+                bytes_values=bytes_values,
+                uncompressed_values=uncompressed_values,
+            )
+        )
+
+    return result

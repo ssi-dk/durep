@@ -6,7 +6,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from durep.analytics import DrilldownNode, GlobalMetrics, PathDelta
+from durep.analytics import (
+    DrilldownNode,
+    GlobalMetrics,
+    PathDelta,
+    ProjectSample,
+    ProjectTimeSeries,
+)
 from durep.ncdu import NcduNode, NcduRun
 
 
@@ -513,6 +519,281 @@ def render_html_report(
   const growthData = {growth_data};
   renderSunburst('usage-sunburst', usageData, formatBytes);
   {growth_init}
+  </script>
+</body>
+</html>
+"""
+
+
+def render_overview_text_report(
+    series: list[ProjectTimeSeries],
+    samples: list[ProjectSample],
+) -> str:
+    lines: list[str] = []
+    lines.append("Disk usage overview")
+    lines.append(f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+    lines.append("")
+
+    if not series:
+        lines.append("No data.")
+        return "\n".join(lines)
+
+    # Build a table: one row per project, latest size, earliest size, growth
+    rows: list[tuple[str, int, int, int, str]] = []
+    for ts in series:
+        # Find earliest and latest non-zero values
+        earliest = 0
+        latest = ts.bytes_values[-1] if ts.bytes_values else 0
+        for v in ts.bytes_values:
+            if v > 0:
+                earliest = v
+                break
+
+        growth = latest - earliest
+        if earliest > 0:
+            pct = f"{(growth / earliest) * 100:+.1f}%"
+        elif latest > 0:
+            pct = "new"
+        else:
+            pct = "0.0%"
+
+        rows.append((ts.project, latest, earliest, growth, pct))
+
+    # Sort by latest size descending
+    rows.sort(key=lambda r: r[1], reverse=True)
+
+    # Table header
+    lines.append(
+        f"  {'Project':<40s}  {'Latest':>12s}  {'Earliest':>12s}  {'Growth':>12s}  {'%':>8s}"
+    )
+    for project, latest, earliest, growth, pct in rows:
+        proj_display = project if len(project) <= 40 else "..." + project[-(40 - 3) :]
+        lines.append(
+            f"  {proj_display:<40s}  {format_bytes(latest):>12s}  {format_bytes(earliest):>12s}"
+            f"  {format_bytes(growth):>12s}  {pct:>8s}"
+        )
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+STACKED_AREA_JS = """\
+function renderStackedArea(containerId, seriesData, formatBytes) {
+  const container = d3.select("#" + containerId);
+  const margin = {top: 20, right: 200, bottom: 40, left: 80};
+  const width = 900 - margin.left - margin.right;
+  const height = 400 - margin.top - margin.bottom;
+
+  const svg = container.append("svg")
+    .attr("viewBox", [0, 0, 900, 400])
+    .style("max-width", "900px")
+    .append("g")
+    .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+  // Parse dates
+  const parseDate = d3.timeParse("%Y-%m-%d");
+  const dates = seriesData.dates.map(d => parseDate(d));
+  const projects = seriesData.projects;
+  const values = seriesData.values;
+
+  // Build stacked data: array of {date, project1: bytes, project2: bytes, ...}
+  const tableData = dates.map((d, i) => {
+    const row = {date: d};
+    projects.forEach((p, j) => { row[p] = values[j][i]; });
+    return row;
+  });
+
+  // Sort projects by absolute growth (smallest first = bottom of stack)
+  const projectGrowth = projects.map((p, j) => {
+    const vals = values[j];
+    const first = vals.find(v => v > 0) || 0;
+    const last = vals[vals.length - 1];
+    return {project: p, absGrowth: Math.abs(last - first)};
+  });
+  projectGrowth.sort((a, b) => a.absGrowth - b.absGrowth);
+  const sortedProjects = projectGrowth.map(pg => pg.project);
+
+  const stack = d3.stack()
+    .keys(sortedProjects)
+    .order(d3.stackOrderNone)
+    .offset(d3.stackOffsetNone);
+
+  const stackedData = stack(tableData);
+
+  const x = d3.scaleTime()
+    .domain(d3.extent(dates))
+    .range([0, width]);
+
+  const y = d3.scaleLinear()
+    .domain([0, d3.max(stackedData, layer => d3.max(layer, d => d[1]))])
+    .nice()
+    .range([height, 0]);
+
+  const color = d3.scaleOrdinal()
+    .domain(sortedProjects)
+    .range(d3.schemeTableau10.concat(d3.schemePaired));
+
+  const area = d3.area()
+    .x((d, i) => x(dates[i]))
+    .y0(d => y(d[0]))
+    .y1(d => y(d[1]));
+
+  // Draw areas
+  svg.selectAll(".layer")
+    .data(stackedData)
+    .join("path")
+    .attr("class", "layer")
+    .attr("fill", d => color(d.key))
+    .attr("fill-opacity", 0.8)
+    .attr("d", area)
+    .append("title")
+    .text(d => d.key);
+
+  // Axes
+  svg.append("g")
+    .attr("transform", "translate(0," + height + ")")
+    .call(d3.axisBottom(x).ticks(d3.timeDay.every(1)).tickFormat(d3.timeFormat("%b %d")));
+
+  svg.append("g")
+    .call(d3.axisLeft(y).ticks(6).tickFormat(d => formatBytes(d)));
+
+  // Legend
+  const legend = svg.append("g")
+    .attr("transform", "translate(" + (width + 10) + ",0)");
+
+  sortedProjects.slice().reverse().forEach((p, i) => {
+    const g = legend.append("g")
+      .attr("transform", "translate(0," + (i * 20) + ")");
+    g.append("rect").attr("width", 14).attr("height", 14).attr("fill", color(p));
+    const label = p.length > 20 ? "..." + p.slice(-(20 - 3)) : p;
+    g.append("text").attr("x", 18).attr("y", 11).style("font-size", "11px").text(label);
+  });
+
+  // Tooltip
+  const tooltip = container.append("div")
+    .style("position", "absolute")
+    .style("background", "rgba(255,255,255,0.95)")
+    .style("border", "1px solid #ccc")
+    .style("border-radius", "4px")
+    .style("padding", "8px")
+    .style("font-size", "12px")
+    .style("pointer-events", "none")
+    .style("display", "none");
+
+  const bisect = d3.bisector(d => d).left;
+
+  svg.append("rect")
+    .attr("width", width)
+    .attr("height", height)
+    .attr("fill", "transparent")
+    .on("mousemove", function(event) {
+      const [mx] = d3.pointer(event);
+      const dateAtMouse = x.invert(mx);
+      const idx = Math.min(bisect(dates, dateAtMouse), dates.length - 1);
+      const d = dates[idx];
+      let html = "<strong>" + d3.timeFormat("%Y-%m-%d")(d) + "</strong><br>";
+      sortedProjects.slice().reverse().forEach((p, j) => {
+        const pi = sortedProjects.indexOf(p);
+        const val = values[pi][idx];
+        if (val > 0) {
+          html += "<span style='color:" + color(p) + "'>\u25a0</span> " + p + ": " + formatBytes(val) + "<br>";
+        }
+      });
+      tooltip.style("display", "block").html(html);
+      const rect = container.node().getBoundingClientRect();
+      tooltip.style("left", (event.clientX - rect.left + 15) + "px")
+             .style("top", (event.clientY - rect.top - 10) + "px");
+    })
+    .on("mouseleave", function() {
+      tooltip.style("display", "none");
+    });
+}
+"""
+
+
+def render_overview_html_report(
+    series: list[ProjectTimeSeries],
+    text_report: str,
+) -> str:
+    if not series:
+        dates: list[str] = []
+        projects: list[str] = []
+        values: list[list[int]] = []
+    else:
+        dates = [d.isoformat() for d in series[0].dates]
+        projects = [s.project for s in series]
+        values = [s.bytes_values for s in series]
+
+    # Summary card values
+    total_projects = len(series)
+    total_latest = sum(s.bytes_values[-1] for s in series if s.bytes_values)
+    total_earliest = 0
+    for s in series:
+        for v in s.bytes_values:
+            if v > 0:
+                total_earliest += v
+                break
+    total_growth = total_latest - total_earliest
+
+    chart_data = json.dumps({"dates": dates, "projects": projects, "values": values})
+
+    return f"""\
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>durep overview</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body {{ font-family: system-ui, sans-serif; margin: 2em; color: #333; }}
+    .cards {{ display: flex; gap: 1.5em; flex-wrap: wrap; margin-bottom: 2em; }}
+    .card {{ background: #f5f5f5; border-radius: 8px; padding: 1em 1.5em; min-width: 150px; }}
+    .card .label {{ font-size: 0.85em; color: #666; }}
+    .card .value {{ font-size: 1.4em; font-weight: bold; }}
+    h1 {{ margin-bottom: 0.3em; }}
+    h2 {{ margin-top: 2em; }}
+    pre {{ background: #f5f5f5; padding: 1.5em; border-radius: 8px; overflow-x: auto;
+           font-size: 0.85em; line-height: 1.5; }}
+    svg {{ display: block; margin: 0 auto; }}
+    #overview-chart {{ position: relative; }}
+  </style>
+</head>
+<body>
+  <h1>Disk usage overview</h1>
+
+  <div class="cards">
+    <div class="card">
+      <div class="label">Projects</div>
+      <div class="value">{total_projects}</div>
+    </div>
+    <div class="card">
+      <div class="label">Total size (latest)</div>
+      <div class="value">{html.escape(format_bytes(total_latest))}</div>
+    </div>
+    <div class="card">
+      <div class="label">Total growth</div>
+      <div class="value">{html.escape(format_bytes(total_growth))}</div>
+    </div>
+  </div>
+
+  <h2>Size over time</h2>
+  <div id="overview-chart"></div>
+
+  <h2>Text report</h2>
+  <pre>{html.escape(text_report)}</pre>
+
+  <script>
+{STACKED_AREA_JS}
+function formatBytes(n) {{
+  if (n < 1024) return n + " B";
+  const units = ["KB", "MB", "GB", "TB", "PB"];
+  let u = -1;
+  do {{ n /= 1024; u++; }} while (n >= 1024 && u < units.length - 1);
+  return n.toFixed(1) + " " + units[u];
+}}
+  const chartData = {chart_data};
+  renderStackedArea('overview-chart', chartData, formatBytes);
   </script>
 </body>
 </html>

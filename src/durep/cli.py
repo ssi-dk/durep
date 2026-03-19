@@ -10,30 +10,56 @@ from typing import Sequence
 from durep.analytics import (
     build_drilldown_tree,
     build_growth_drilldown,
+    build_overview_series,
     compute_all_uncompressed_stats,
     compute_directory_deltas,
     compute_global_metrics,
+    extract_project_sample,
 )
 from durep.ncdu import NcduRun, parse_ncdu_json_file
-from durep.reports import render_html_report, render_text_report
+from durep.reports import (
+    render_html_report,
+    render_overview_html_report,
+    render_overview_text_report,
+    render_text_report,
+)
 
 log = logging.getLogger("durep")
 
 
 @dataclass(slots=True)
-class CliArgs:
+class DetailArgs:
     scans: list[Path]
     out_dir: Path
     top_n: int
     max_depth: int
 
     @classmethod
-    def from_namespace(cls, namespace: argparse.Namespace) -> CliArgs:
+    def from_namespace(cls, namespace: argparse.Namespace) -> DetailArgs:
         return cls(
             scans=[Path(p) for p in namespace.scan],
             out_dir=Path(namespace.out_dir),
             top_n=namespace.top_n,
             max_depth=namespace.max_depth,
+        )
+
+    def validate(self) -> None:
+        if len(self.scans) > 2:
+            raise ValueError("at most two scan files may be provided")
+        for scan in self.scans:
+            require_file(scan, str(scan))
+
+
+@dataclass(slots=True)
+class OverviewArgs:
+    scans: list[Path]
+    out_dir: Path
+
+    @classmethod
+    def from_namespace(cls, namespace: argparse.Namespace) -> OverviewArgs:
+        return cls(
+            scans=[Path(p) for p in namespace.scan],
+            out_dir=Path(namespace.out_dir),
         )
 
     def validate(self) -> None:
@@ -53,33 +79,53 @@ def build_parser() -> argparse.ArgumentParser:
         description="Generate disk usage reports from ncdu JSON scans."
     )
     parser.add_argument(
-        "scan",
-        nargs="+",
-        help="One or two ncdu JSON scan paths."
-        " When two are given, timestamps determine which is current vs previous.",
-    )
-    parser.add_argument("--out-dir", required=True, help="Output directory for generated reports.")
-    parser.add_argument(
-        "--top-n",
-        type=positive_int,
-        default=25,
-        help="Maximum number of children to keep per expanded node (default: 25).",
-    )
-    parser.add_argument(
-        "--max-depth",
-        type=positive_int,
-        # TODO: Tweak based on empirical data from production NCDU files.
-        # In practice, directory trees are sparse so deep expansion is fine.
-        # Monitor HTML file size and browser responsiveness on large scans.
-        default=100,
-        help="Maximum expansion depth used for drilldown datasets (default: 100).",
-    )
-    parser.add_argument(
         "--log-level",
         default=None,
         help="Log level (e.g. DEBUG, INFO, WARNING, ERROR, CRITICAL, or an integer)."
         " Falls back to DUREP_LOG_LEVEL env var, then WARNING.",
     )
+
+    subparsers = parser.add_subparsers(dest="subcommand")
+
+    # detail subcommand
+    detail = subparsers.add_parser(
+        "detail",
+        help="Detailed per-project report with sunburst diagrams.",
+    )
+    detail.add_argument(
+        "scan",
+        nargs="+",
+        help="One or two ncdu JSON scan paths."
+        " When two are given, timestamps determine which is current vs previous.",
+    )
+    detail.add_argument("--out-dir", required=True, help="Output directory for generated reports.")
+    detail.add_argument(
+        "--top-n",
+        type=positive_int,
+        default=25,
+        help="Maximum number of children to keep per expanded node (default: 25).",
+    )
+    detail.add_argument(
+        "--max-depth",
+        type=positive_int,
+        default=100,
+        help="Maximum expansion depth used for drilldown datasets (default: 100).",
+    )
+
+    # overview subcommand
+    overview = subparsers.add_parser(
+        "overview",
+        help="High-level overview comparing many projects over time.",
+    )
+    overview.add_argument(
+        "scan",
+        nargs="+",
+        help="One or more ncdu JSON scan paths.",
+    )
+    overview.add_argument(
+        "--out-dir", required=True, help="Output directory for generated reports."
+    )
+
     return parser
 
 
@@ -115,14 +161,6 @@ def configure_logging(cli_value: str | None) -> None:
     )
 
 
-def parse_and_validate_args(namespace: argparse.Namespace) -> CliArgs:
-    if len(namespace.scan) > 2:
-        raise ValueError("at most two scan files may be provided")
-    args = CliArgs.from_namespace(namespace)
-    args.validate()
-    return args
-
-
 def order_runs(run_a: NcduRun, run_b: NcduRun) -> tuple[NcduRun, NcduRun]:
     """Return (current_run, previous_run) based on timestamps.
 
@@ -144,7 +182,7 @@ def order_runs(run_a: NcduRun, run_b: NcduRun) -> tuple[NcduRun, NcduRun]:
     return run_b, run_a
 
 
-def execute(args: CliArgs) -> None:
+def execute_detail(args: DetailArgs) -> None:
     out_dir = args.out_dir
     if out_dir.exists():
         raise FileExistsError(f"output directory already exists: {out_dir}")
@@ -212,11 +250,47 @@ def execute(args: CliArgs) -> None:
     log.info("Wrote HTML report: %s", html_path)
 
 
+def execute_overview(args: OverviewArgs) -> None:
+    out_dir = args.out_dir
+    if out_dir.exists():
+        raise FileExistsError(f"output directory already exists: {out_dir}")
+    out_dir.mkdir(parents=True)
+    log.info("Output directory: %s", out_dir)
+
+    samples = []
+    for scan_path in args.scans:
+        log.info("Parsing scan: %s", scan_path)
+        run = parse_ncdu_json_file(scan_path)
+        sample = extract_project_sample(run)
+        samples.append(sample)
+
+    series = build_overview_series(samples)
+
+    text = render_overview_text_report(series, samples)
+    text_path = out_dir / "text_report.txt"
+    text_path.write_text(text, encoding="utf-8")
+    log.info("Wrote text report: %s", text_path)
+
+    html = render_overview_html_report(series, text)
+    html_path = out_dir / "overview.html"
+    html_path.write_text(html, encoding="utf-8")
+    log.info("Wrote HTML report: %s", html_path)
+
+
 def run(argv: Sequence[str] | None = None) -> int:
-    namespace = build_parser().parse_args(argv)
+    parser = build_parser()
+    namespace = parser.parse_args(argv)
     configure_logging(namespace.log_level)
-    args = parse_and_validate_args(namespace)
-    execute(args)
+    if namespace.subcommand is None:
+        parser.error("a subcommand is required (detail, overview)")
+    if namespace.subcommand == "detail":
+        args = DetailArgs.from_namespace(namespace)
+        args.validate()
+        execute_detail(args)
+    elif namespace.subcommand == "overview":
+        args = OverviewArgs.from_namespace(namespace)
+        args.validate()
+        execute_overview(args)
     return 0
 
 
@@ -225,8 +299,16 @@ def main(argv: Sequence[str] | None = None) -> None:
     try:
         namespace = parser.parse_args(argv)
         configure_logging(namespace.log_level)
-        args = parse_and_validate_args(namespace)
-        execute(args)
+        if namespace.subcommand is None:
+            parser.error("a subcommand is required (detail, overview)")
+        if namespace.subcommand == "detail":
+            args = DetailArgs.from_namespace(namespace)
+            args.validate()
+            execute_detail(args)
+        elif namespace.subcommand == "overview":
+            args = OverviewArgs.from_namespace(namespace)
+            args.validate()
+            execute_overview(args)
         raise SystemExit(0)
     except (FileNotFoundError, FileExistsError, ValueError) as exc:
         parser.exit(status=1, message=f"error: {exc}\n")

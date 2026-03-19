@@ -1,17 +1,21 @@
 from __future__ import annotations
 
+import datetime
 from pathlib import Path
 
 from durep.analytics import (
+    ProjectSample,
     UncompressedStats,
     build_drilldown_tree,
     build_growth_drilldown,
+    build_overview_series,
     build_shrinkage_drilldown,
     compute_all_uncompressed_stats,
     compute_directory_deltas,
     compute_global_metrics,
+    extract_project_sample,
 )
-from durep.ncdu import NcduNode
+from durep.ncdu import NcduNode, NcduRun
 
 
 def make_file(parent: Path, name: str, disk_size: int) -> NcduNode:
@@ -289,3 +293,135 @@ def test_shrinkage_drilldown_returns_none_when_nothing_shrunk() -> None:
 
     result = build_shrinkage_drilldown(curr_root, deltas, top_n=10, max_depth=5)
     assert result is None
+
+
+# --- extract_project_sample ---
+
+
+def make_run(
+    root_name: str = "/data", dsize: int = 100, timestamp_epoch: int | None = 1700000000
+) -> NcduRun:
+    root = make_dir(Path(root_name), [make_file(Path(root_name), "a.txt", dsize)])
+    ts = None
+    if timestamp_epoch is not None:
+        ts = datetime.datetime.fromtimestamp(timestamp_epoch, tz=datetime.timezone.utc)
+    return NcduRun(root=root, timestamp=ts)
+
+
+def test_extract_project_sample_basic() -> None:
+    run = make_run("/proj", dsize=500, timestamp_epoch=1700000000)
+    sample = extract_project_sample(run)
+
+    assert sample.project == "/proj"
+    assert sample.date == datetime.date(2023, 11, 14)
+    assert sample.total_bytes == 500
+    assert sample.total_files == 1
+    assert sample.total_directories == 1
+
+
+def test_extract_project_sample_missing_timestamp() -> None:
+    run = make_run(timestamp_epoch=None)
+
+    import pytest
+
+    with pytest.raises(ValueError, match="no timestamp"):
+        extract_project_sample(run)
+
+
+def test_extract_project_sample_includes_uncompressed() -> None:
+    root_path = Path("/bio")
+    root = make_dir(root_path, [make_file(root_path, "reads.fastq", 1000)])
+    ts = datetime.datetime.fromtimestamp(1700000000, tz=datetime.timezone.utc)
+    run = NcduRun(root=root, timestamp=ts)
+
+    sample = extract_project_sample(run)
+    assert sample.uncompressed.fastq == 1000
+
+
+# --- build_overview_series ---
+
+
+def make_sample(
+    project: str,
+    date: datetime.date,
+    total_bytes: int,
+    hour: int = 0,
+) -> ProjectSample:
+    ts = datetime.datetime(date.year, date.month, date.day, hour, tzinfo=datetime.timezone.utc)
+    return ProjectSample(
+        project=project,
+        timestamp=ts,
+        date=date,
+        total_bytes=total_bytes,
+        total_files=1,
+        total_directories=1,
+        uncompressed=UncompressedStats.zero(),
+    )
+
+
+def test_overview_series_day_binning() -> None:
+    samples = [
+        make_sample("/a", datetime.date(2024, 1, 1), 100),
+        make_sample("/a", datetime.date(2024, 1, 3), 300),
+    ]
+    series = build_overview_series(samples)
+
+    assert len(series) == 1
+    ts = series[0]
+    assert ts.dates == [
+        datetime.date(2024, 1, 1),
+        datetime.date(2024, 1, 2),
+        datetime.date(2024, 1, 3),
+    ]
+    # Forward-fill: day 2 gets day 1's value
+    assert ts.bytes_values == [100, 100, 300]
+
+
+def test_overview_series_no_backward_fill() -> None:
+    samples = [
+        make_sample("/early", datetime.date(2024, 1, 1), 100),
+        make_sample("/late", datetime.date(2024, 1, 3), 200),
+    ]
+    series = build_overview_series(samples)
+
+    # /early is before /late alphabetically
+    early = next(s for s in series if s.project == "/early")
+    late = next(s for s in series if s.project == "/late")
+
+    # /late should have 0 for days 1 and 2 (no backward fill)
+    assert late.bytes_values[0] == 0
+    assert late.bytes_values[1] == 0
+    assert late.bytes_values[2] == 200
+
+    # /early should forward-fill into days 2 and 3
+    assert early.bytes_values == [100, 100, 100]
+
+
+def test_overview_series_same_day_dedup() -> None:
+    # Later timestamp wins, regardless of input order
+    samples = [
+        make_sample("/a", datetime.date(2024, 1, 1), 200, hour=14),
+        make_sample("/a", datetime.date(2024, 1, 1), 100, hour=8),
+    ]
+    series = build_overview_series(samples)
+
+    assert len(series) == 1
+    assert series[0].bytes_values == [200]
+
+
+def test_overview_series_empty() -> None:
+    assert build_overview_series([]) == []
+
+
+def test_project_time_series_rejects_mismatched_lengths() -> None:
+    import pytest
+
+    from durep.analytics import ProjectTimeSeries
+
+    with pytest.raises(ValueError, match="list lengths must match"):
+        ProjectTimeSeries(
+            project="/a",
+            dates=[datetime.date(2024, 1, 1)],
+            bytes_values=[100, 200],
+            uncompressed_values=[],
+        )
