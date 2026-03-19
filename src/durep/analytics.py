@@ -179,29 +179,81 @@ def _build_drilldown(
             uncompressed=node_stats,
         )
 
-    sorted_children = sorted(node.children, key=lambda c: c.total_bytes, reverse=True)
-    kept = sorted_children[:top_n]
-    remainder = sorted_children[top_n:]
+    # At the last expanded level, coalesce child subdirectories into a single
+    # synthetic node so that files from deeper levels don't leak into this ring.
+    at_depth_limit = depth == max_depth - 1
 
-    children = [_build_drilldown(c, uncompressed, top_n, max_depth, depth + 1) for c in kept]
+    file_children = [c for c in node.children if c.node_type == "file"]
+    dir_children = [c for c in node.children if c.node_type == "dir"]
 
-    if remainder:
-        other_bytes = sum(c.total_bytes for c in remainder)
-        other_stats = UncompressedStats.zero()
-        for c in remainder:
+    if at_depth_limit and dir_children:
+        sorted_files = sorted(file_children, key=lambda c: c.total_bytes, reverse=True)
+        kept_files = sorted_files[:top_n]
+        remainder_files = sorted_files[top_n:]
+
+        children = [
+            _build_drilldown(c, uncompressed, top_n, max_depth, depth + 1) for c in kept_files
+        ]
+
+        # Aggregate all subdirectories into one synthetic leaf
+        subdirs_bytes = sum(c.total_bytes for c in dir_children)
+        subdirs_stats = UncompressedStats.zero()
+        for c in dir_children:
             s = uncompressed[c.path]
-            other_stats.fasta += s.fasta
-            other_stats.fastq += s.fastq
-            other_stats.sam += s.sam
-            other_stats.vcf += s.vcf
+            subdirs_stats.fasta += s.fasta
+            subdirs_stats.fastq += s.fastq
+            subdirs_stats.sam += s.sam
+            subdirs_stats.vcf += s.vcf
         children.append(
             DrilldownNode(
-                path=node.path / f"Other ({len(remainder)} items)",
+                path=node.path / f"{len(dir_children)} subdirectories",
                 node_type="file",
-                total_bytes=other_bytes,
-                uncompressed=other_stats,
+                total_bytes=subdirs_bytes,
+                uncompressed=subdirs_stats,
             )
         )
+
+        if remainder_files:
+            other_bytes = sum(c.total_bytes for c in remainder_files)
+            other_stats = UncompressedStats.zero()
+            for c in remainder_files:
+                s = uncompressed[c.path]
+                other_stats.fasta += s.fasta
+                other_stats.fastq += s.fastq
+                other_stats.sam += s.sam
+                other_stats.vcf += s.vcf
+            children.append(
+                DrilldownNode(
+                    path=node.path / f"Other ({len(remainder_files)} files)",
+                    node_type="file",
+                    total_bytes=other_bytes,
+                    uncompressed=other_stats,
+                )
+            )
+    else:
+        sorted_children = sorted(node.children, key=lambda c: c.total_bytes, reverse=True)
+        kept = sorted_children[:top_n]
+        remainder = sorted_children[top_n:]
+
+        children = [_build_drilldown(c, uncompressed, top_n, max_depth, depth + 1) for c in kept]
+
+        if remainder:
+            other_bytes = sum(c.total_bytes for c in remainder)
+            other_stats = UncompressedStats.zero()
+            for c in remainder:
+                s = uncompressed[c.path]
+                other_stats.fasta += s.fasta
+                other_stats.fastq += s.fastq
+                other_stats.sam += s.sam
+                other_stats.vcf += s.vcf
+            children.append(
+                DrilldownNode(
+                    path=node.path / f"Other ({len(remainder)} items)",
+                    node_type="file",
+                    total_bytes=other_bytes,
+                    uncompressed=other_stats,
+                )
+            )
 
     return DrilldownNode(
         path=node.path,

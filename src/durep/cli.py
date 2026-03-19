@@ -53,26 +53,29 @@ def positive_int(value: str) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Generate disk usage reports from ncdu JSON snapshots."
+        description="Generate disk usage reports from ncdu JSON scans."
     )
-    parser.add_argument("--current", required=True, help="Current ncdu JSON snapshot path.")
+    parser.add_argument("--current", required=True, help="Current ncdu JSON scan path.")
     parser.add_argument(
         "--previous",
         required=False,
-        help="Previous ncdu JSON snapshot path used for diff calculations.",
+        help="Previous ncdu JSON scan path used for diff calculations.",
     )
     parser.add_argument("--out-dir", required=True, help="Output directory for generated reports.")
     parser.add_argument(
         "--top-n",
         type=positive_int,
-        default=15,
+        default=25,
         help="Maximum number of children to keep per expanded node (default: 25).",
     )
     parser.add_argument(
         "--max-depth",
         type=positive_int,
-        default=7,
-        help="Maximum expansion depth used for drilldown datasets (default: 7).",
+        # TODO: Tweak based on empirical data from production NCDU files.
+        # In practice, directory trees are sparse so deep expansion is fine.
+        # Monitor HTML file size and browser responsiveness on large scans.
+        default=100,
+        help="Maximum expansion depth used for drilldown datasets (default: 100).",
     )
     parser.add_argument(
         "--log-level",
@@ -128,20 +131,20 @@ def execute(args: CliArgs) -> None:
     out_dir.mkdir(parents=True)
     log.info("Output directory: %s", out_dir)
 
-    log.info("Parsing current snapshot: %s", args.current)
+    log.info("Parsing current scan: %s", args.current)
     current_run = parse_ncdu_json_file(args.current)
     log.debug(
-        "Current snapshot: %d files, %d directories",
+        "Current scan: %d files, %d directories",
         current_run.root.total_files,
         current_run.root.total_directories,
     )
 
     previous_run: NcduRun | None = None
     if args.previous is not None:
-        log.info("Parsing previous snapshot: %s", args.previous)
+        log.info("Parsing previous scan: %s", args.previous)
         previous_run = parse_ncdu_json_file(args.previous)
         log.debug(
-            "Previous snapshot: %d files, %d directories",
+            "Previous scan: %d files, %d directories",
             previous_run.root.total_files,
             previous_run.root.total_directories,
         )
@@ -156,7 +159,7 @@ def execute(args: CliArgs) -> None:
         deltas = compute_directory_deltas(current_run.root, previous_run.root)
         log.info("Computed deltas for %d directories", len(deltas))
 
-    text = render_text_report(current_run, metrics, deltas, args.top_n)
+    text = render_text_report(current_run, previous_run, metrics, deltas, args.top_n)
     text_path = out_dir / "text_report.txt"
     text_path.write_text(text, encoding="utf-8")
     log.info("Wrote text report: %s", text_path)
@@ -171,7 +174,7 @@ def execute(args: CliArgs) -> None:
             current_run.root, deltas, args.top_n, args.max_depth
         )
 
-    html = render_html_report(drilldown, metrics, growth_drilldown, text)
+    html = render_html_report(current_run, previous_run, drilldown, metrics, growth_drilldown, text)
     html_path = out_dir / "overall.html"
     html_path.write_text(html, encoding="utf-8")
     log.info("Wrote HTML report: %s", html_path)
