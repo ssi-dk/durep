@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from durep.analytics import DrilldownNode, GlobalMetrics, PathDelta
-from durep.ncdu import NcduNode
+from durep.ncdu import NcduNode, NcduRun
 
 
 def format_bytes(n: int) -> str:
@@ -26,15 +26,18 @@ def format_bytes(n: int) -> str:
 
 
 def render_text_report(
-    root: NcduNode,
+    current_run: NcduRun,
     metrics: GlobalMetrics,
     deltas: dict[Path, PathDelta] | None,
     top_n: int,
 ) -> str:
+    root = current_run.root
     lines: list[str] = []
 
     # Header
     lines.append(f"Disk usage report: {root.path}")
+    if current_run.timestamp is not None:
+        lines.append(f"Scanned: {current_run.timestamp.strftime('%Y-%m-%d %H:%M UTC')}")
     lines.append(f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
     lines.append("")
 
@@ -47,8 +50,8 @@ def render_text_report(
 
     # Uncompressed data breakdown
     u = metrics.total_uncompressed
-    if u.fasta or u.fastq or u.sam or u.vcf:
-        lines.append("Uncompressed data")
+    if u.total_size:
+        lines.append(f"Uncompressed data: {format_bytes(u.total_size)}")
         if u.fasta:
             lines.append(f"  FASTA: {format_bytes(u.fasta)}")
         if u.fastq:
@@ -59,13 +62,13 @@ def render_text_report(
             lines.append(f"  VCF:   {format_bytes(u.vcf)}")
         lines.append("")
 
-    # Top N largest directories
-    dirs = _collect_dirs_by_size(root)
-    dirs.sort(key=lambda d: d.total_bytes, reverse=True)
-    top_dirs = dirs[:top_n]
-    lines.append(f"Top {len(top_dirs)} largest directories")
-    for d in top_dirs:
-        lines.append(f"  {format_bytes(d.total_bytes):>12s}  {d.path}")
+    # Top N directories by direct file size (excludes subdirectory contributions)
+    ranked = _collect_dirs_by_direct_bytes(root)
+    ranked.sort(key=lambda pair: pair[1], reverse=True)
+    top_dirs = ranked[:top_n]
+    lines.append(f"Top {len(top_dirs)} directories by direct file size")
+    for node, direct in top_dirs:
+        lines.append(f"  {format_bytes(direct):>12s}  {format_bytes(node.total_bytes):>12s}  {node.path}")
     lines.append("")
 
     # Changes
@@ -96,13 +99,15 @@ def render_text_report(
     return "\n".join(lines)
 
 
-def _collect_dirs_by_size(root: NcduNode) -> list[NcduNode]:
-    result: list[NcduNode] = []
+def _collect_dirs_by_direct_bytes(root: NcduNode) -> list[tuple[NcduNode, int]]:
+    result: list[tuple[NcduNode, int]] = []
     stack = [root]
     while stack:
         node = stack.pop()
         if node.node_type == "dir":
-            result.append(node)
+            child_dir_bytes = sum(c.total_bytes for c in node.children if c.node_type == "dir")
+            direct = node.total_bytes - child_dir_bytes
+            result.append((node, direct))
             stack.extend(node.children)
     return result
 

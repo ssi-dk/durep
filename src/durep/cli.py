@@ -14,7 +14,7 @@ from durep.analytics import (
     compute_directory_deltas,
     compute_global_metrics,
 )
-from durep.ncdu import parse_ncdu_json_file
+from durep.ncdu import NcduRun, parse_ncdu_json_file
 from durep.reports import render_html_report, render_text_report
 
 log = logging.getLogger("durep")
@@ -66,13 +66,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--top-n",
         type=positive_int,
         default=15,
-        help="Maximum number of children to keep per expanded node (default: 15).",
+        help="Maximum number of children to keep per expanded node (default: 25).",
     )
     parser.add_argument(
         "--max-depth",
         type=positive_int,
-        default=4,
-        help="Maximum expansion depth used for drilldown datasets (default: 4).",
+        default=7,
+        help="Maximum expansion depth used for drilldown datasets (default: 7).",
     )
     parser.add_argument(
         "--log-level",
@@ -129,45 +129,47 @@ def execute(args: CliArgs) -> None:
     log.info("Output directory: %s", out_dir)
 
     log.info("Parsing current snapshot: %s", args.current)
-    current_root = parse_ncdu_json_file(args.current)
+    current_run = parse_ncdu_json_file(args.current)
     log.debug(
         "Current snapshot: %d files, %d directories",
-        current_root.total_files,
-        current_root.total_directories,
+        current_run.root.total_files,
+        current_run.root.total_directories,
     )
 
-    previous_root = None
+    previous_run: NcduRun | None = None
     if args.previous is not None:
         log.info("Parsing previous snapshot: %s", args.previous)
-        previous_root = parse_ncdu_json_file(args.previous)
+        previous_run = parse_ncdu_json_file(args.previous)
         log.debug(
             "Previous snapshot: %d files, %d directories",
-            previous_root.total_files,
-            previous_root.total_directories,
+            previous_run.root.total_files,
+            previous_run.root.total_directories,
         )
 
     log.debug("Computing uncompressed stats")
-    uncompressed = compute_all_uncompressed_stats(current_root)
-    metrics = compute_global_metrics(current_root, uncompressed)
+    uncompressed = compute_all_uncompressed_stats(current_run.root)
+    metrics = compute_global_metrics(current_run.root, uncompressed)
 
     deltas = None
-    if previous_root is not None:
+    if previous_run is not None:
         log.debug("Computing directory deltas")
-        deltas = compute_directory_deltas(current_root, previous_root)
+        deltas = compute_directory_deltas(current_run.root, previous_run.root)
         log.info("Computed deltas for %d directories", len(deltas))
 
-    text = render_text_report(current_root, metrics, deltas, args.top_n)
+    text = render_text_report(current_run, metrics, deltas, args.top_n)
     text_path = out_dir / "text_report.txt"
     text_path.write_text(text, encoding="utf-8")
     log.info("Wrote text report: %s", text_path)
 
     log.debug("Building drilldown tree (top_n=%d, max_depth=%d)", args.top_n, args.max_depth)
-    drilldown = build_drilldown_tree(current_root, uncompressed, args.top_n, args.max_depth)
+    drilldown = build_drilldown_tree(current_run.root, uncompressed, args.top_n, args.max_depth)
 
     growth_drilldown = None
     if deltas is not None:
         log.debug("Building growth drilldown")
-        growth_drilldown = build_growth_drilldown(current_root, deltas, args.top_n, args.max_depth)
+        growth_drilldown = build_growth_drilldown(
+            current_run.root, deltas, args.top_n, args.max_depth
+        )
 
     html = render_html_report(drilldown, metrics, growth_drilldown, text)
     html_path = out_dir / "overall.html"

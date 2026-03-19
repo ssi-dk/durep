@@ -50,6 +50,10 @@ class UncompressedStats:
         else:
             assert False  # unreachable
 
+    @property
+    def total_size(self) -> int:
+        return self.fasta + self.fastq + self.vcf + self.sam
+
     @classmethod
     def zero(cls) -> UncompressedStats:
         return cls(0, 0, 0, 0)

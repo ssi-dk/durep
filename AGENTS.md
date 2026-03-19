@@ -1,7 +1,17 @@
 # NCDU report
-This Python application reads NCDU JSON files as well as a table mapping directories to projects, and produces per-project HTML reports with interactive sunburst diagrams of the disk usage.
+This Python application reads NCDU JSON files and produces a text summary and an interactive HTML
+report with sunburst diagrams of disk usage.
 
-This code is a work-in-progress. See @PLAN.md for the overall plan. 
+This code is a work-in-progress. See @PLAN.md for the overall plan.
+
+## Running
+```bash
+# Run tests
+.venv/bin/python -m pytest tests/ -v
+
+# Run the CLI
+.venv/bin/python -m durep --current PATH --out-dir PATH [--previous PATH]
+```
 
 ## Coding style
 * Never add an AI agent as a co-author on commits

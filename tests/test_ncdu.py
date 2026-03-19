@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -26,7 +27,8 @@ def test_parse_ncdu_json_data_builds_normalized_tree_with_aggregates() -> None:
         ],
     ]
 
-    root = parse_ncdu_json_data(data)
+    run = parse_ncdu_json_data(data)
+    root = run.root
 
     assert root.path == Path("/")
     assert root.node_type == "dir"
@@ -65,6 +67,23 @@ def test_parse_ncdu_json_data_builds_normalized_tree_with_aggregates() -> None:
     assert deep.apparent_size == 1
 
 
+def test_parse_ncdu_json_data_extracts_timestamp() -> None:
+    data = [
+        1,
+        2,
+        {"progname": "ncdu", "progver": "2.7", "timestamp": 1700000000},
+        [{"name": "/", "asize": 1}],
+    ]
+
+    run = parse_ncdu_json_data(data)
+    assert run.timestamp == datetime(2023, 11, 14, 22, 13, 20, tzinfo=timezone.utc)
+
+
+def test_parse_ncdu_json_data_timestamp_is_none_when_missing() -> None:
+    run = parse_ncdu_json_data([{"name": "/", "asize": 1}])
+    assert run.timestamp is None
+
+
 def test_parse_ncdu_json_data_rejects_relative_root_name() -> None:
     with pytest.raises(ValueError, match="Root node path must be absolute"):
         parse_ncdu_json_data([{"name": "tmp", "asize": 1}])
@@ -74,9 +93,9 @@ def test_parse_ncdu_json_file_reads_json(tmp_path: Path) -> None:
     source = tmp_path / "snapshot.json"
     source.write_text('[{"name": "/", "asize": 1}]', encoding="utf-8")
 
-    root = parse_ncdu_json_file(source)
-    assert root.path == Path("/")
-    assert root.total_bytes == 1
+    run = parse_ncdu_json_file(source)
+    assert run.root.path == Path("/")
+    assert run.root.total_bytes == 1
 
 
 def test_parse_ncdu_json_data_rejects_invalid_shape() -> None:

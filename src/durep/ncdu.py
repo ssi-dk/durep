@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NamedTuple, Literal
 
@@ -24,15 +25,23 @@ class NcduNode:
     children: list[NcduNode] = field(default_factory=list)
 
 
-def parse_ncdu_json_file(path: Path) -> NcduNode:
+@dataclass(slots=True)
+class NcduRun:
+    root: NcduNode
+    timestamp: datetime | None = None
+
+
+def parse_ncdu_json_file(path: Path) -> NcduRun:
     with path.open("r", encoding="utf-8") as handle:
         data = json.load(handle)
     return parse_ncdu_json_data(data)
 
 
-def parse_ncdu_json_data(data: Any) -> NcduNode:
+def parse_ncdu_json_data(data: Any) -> NcduRun:
     tree = extract_root_tree(data)
-    return parse_dir_tree(tree=tree, parent_path=None)
+    root = parse_dir_tree(tree=tree, parent_path=None)
+    timestamp = extract_timestamp(data)
+    return NcduRun(root=root, timestamp=timestamp)
 
 
 # NCDU JSON's top-level data is a list with multiple metadata, and then one root tree.
@@ -46,6 +55,18 @@ def extract_root_tree(data: Any) -> list[Any]:
             if is_dir_tree(item):
                 return item
     raise ValueError("Unable to locate an ncdu directory tree in JSON data")
+
+
+def extract_timestamp(data: Any) -> datetime | None:
+    if not isinstance(data, list):
+        return None
+    for item in data:
+        if isinstance(item, dict) and "timestamp" in item:
+            try:
+                return datetime.fromtimestamp(int(item["timestamp"]), tz=timezone.utc)
+            except (TypeError, ValueError, OverflowError):
+                return None
+    return None
 
 
 def is_dir_tree(value: Any) -> bool:
