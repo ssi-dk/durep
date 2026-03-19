@@ -76,6 +76,13 @@ class DrilldownNode:
     total_bytes: int
     uncompressed: UncompressedStats
     children: list[DrilldownNode] = field(default_factory=list)
+    previous_bytes: int | None = None
+
+    @property
+    def delta_bytes(self) -> int | None:
+        if self.previous_bytes is None:
+            return None
+        return self.total_bytes - self.previous_bytes
 
 
 # If a path occurs in NCDUs at different times, this class is used to store
@@ -128,11 +135,11 @@ def compute_global_metrics(
 
 
 def compute_directory_deltas(current: NcduNode, previous: NcduNode) -> dict[Path, PathDelta]:
-    current_dirs = _collect_directories(current)
-    previous_dirs = _collect_directories(previous)
+    current_nodes = _collect_all_nodes(current)
+    previous_nodes = _collect_all_nodes(previous)
     deltas: dict[Path, PathDelta] = {}
-    for path, cur_node in current_dirs.items():
-        prev_node = previous_dirs.get(path)
+    for path, cur_node in current_nodes.items():
+        prev_node = previous_nodes.get(path)
         if prev_node is not None:
             deltas[path] = PathDelta(
                 path=path,
@@ -142,14 +149,13 @@ def compute_directory_deltas(current: NcduNode, previous: NcduNode) -> dict[Path
     return deltas
 
 
-def _collect_directories(root: NcduNode) -> dict[Path, NcduNode]:
+def _collect_all_nodes(root: NcduNode) -> dict[Path, NcduNode]:
     result: dict[Path, NcduNode] = {}
     stack = [root]
     while stack:
         node = stack.pop()
-        if node.node_type == "dir":
-            result[node.path] = node
-            stack.extend(node.children)
+        result[node.path] = node
+        stack.extend(node.children)
     return result
 
 
@@ -158,8 +164,9 @@ def build_drilldown_tree(
     uncompressed: dict[Path, UncompressedStats],
     top_n: int,
     max_depth: int,
+    deltas: dict[Path, PathDelta] | None = None,
 ) -> DrilldownNode:
-    return _build_drilldown(root, uncompressed, top_n, max_depth, depth=0)
+    return _build_drilldown(root, uncompressed, top_n, max_depth, deltas, depth=0)
 
 
 def _build_drilldown(
@@ -167,9 +174,12 @@ def _build_drilldown(
     uncompressed: dict[Path, UncompressedStats],
     top_n: int,
     max_depth: int,
+    deltas: dict[Path, PathDelta] | None,
     depth: int,
 ) -> DrilldownNode:
     node_stats = uncompressed[node.path]
+    delta = deltas.get(node.path) if deltas else None
+    prev = delta.previous_bytes if delta else None
 
     if node.node_type == "file" or depth >= max_depth:
         return DrilldownNode(
@@ -177,6 +187,7 @@ def _build_drilldown(
             node_type=node.node_type,
             total_bytes=node.total_bytes,
             uncompressed=node_stats,
+            previous_bytes=prev,
         )
 
     # At the last expanded level, coalesce child subdirectories into a single
@@ -192,7 +203,8 @@ def _build_drilldown(
         remainder_files = sorted_files[top_n:]
 
         children = [
-            _build_drilldown(c, uncompressed, top_n, max_depth, depth + 1) for c in kept_files
+            _build_drilldown(c, uncompressed, top_n, max_depth, deltas, depth + 1)
+            for c in kept_files
         ]
 
         # Aggregate all subdirectories into one synthetic leaf
@@ -235,7 +247,9 @@ def _build_drilldown(
         kept = sorted_children[:top_n]
         remainder = sorted_children[top_n:]
 
-        children = [_build_drilldown(c, uncompressed, top_n, max_depth, depth + 1) for c in kept]
+        children = [
+            _build_drilldown(c, uncompressed, top_n, max_depth, deltas, depth + 1) for c in kept
+        ]
 
         if remainder:
             other_bytes = sum(c.total_bytes for c in remainder)
@@ -261,6 +275,7 @@ def _build_drilldown(
         total_bytes=node.total_bytes,
         uncompressed=node_stats,
         children=children,
+        previous_bytes=prev,
     )
 
 

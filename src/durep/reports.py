@@ -125,8 +125,18 @@ def _collect_dirs_by_direct_bytes(root: NcduNode) -> list[tuple[NcduNode, int]]:
 
 def drilldown_to_d3(node: DrilldownNode) -> dict[str, Any]:
     result: dict[str, Any] = {"name": node.path.name or str(node.path)}
+    if node.previous_bytes is not None:
+        result["previousBytes"] = node.previous_bytes
     if node.children:
-        result["children"] = [drilldown_to_d3(c) for c in node.children]
+        children = [drilldown_to_d3(c) for c in node.children]
+        # D3's .sum() only totals leaf values. If the directory's own disk
+        # usage (dsize) isn't fully covered by its children, emit the
+        # remainder as an invisible leaf so the D3 total matches total_bytes.
+        child_sum = sum(c.total_bytes for c in node.children)
+        remainder = node.total_bytes - child_sum
+        if remainder > 0:
+            children.append({"name": "", "value": remainder})
+        result["children"] = children
     else:
         result["value"] = node.total_bytes
     return result
@@ -137,8 +147,28 @@ function renderSunburst(containerId, data, formatBytes) {
   const width = 700;
   const radius = width / 2;
 
-  const color = d3.scaleOrdinal(d3.quantize(d3.interpolateRainbow,
-    (data.children ? data.children.length : 0) + 1));
+  const RED = "#d9534f";
+  const BLUE = "#5bc0de";
+  function deltaColor(d) {
+    if (d.data.previousBytes != null) {
+      return d.value > d.data.previousBytes ? RED : BLUE;
+    }
+    // No previous data (new, or no --previous given) -> red
+    return RED;
+  }
+
+  function deltaOpacity(d) {
+    if (d.data.previousBytes == null) return 0.5;
+    const cur = d.value;
+    const prev = d.data.previousBytes;
+    if (cur === prev) return 0.25;
+    if (cur > prev) {
+      // Growth: ratio of old/new → 0 for huge growth, 1 for tiny growth
+      return 0.25 + 0.75 * (1 - prev / cur);
+    }
+    // Shrinkage: ratio of new/old → 0 for huge shrinkage, 1 for tiny shrinkage
+    return 0.25 + 0.75 * (1 - cur / prev);
+  }
 
   const root = d3.hierarchy(data)
     .sum(d => d.value || 0)
@@ -190,6 +220,13 @@ function renderSunburst(containerId, data, formatBytes) {
     .style("margin", "0.5em 0");
   breadcrumb.text(root.data.name + " (" + formatBytes(root.value) + ")");
 
+  const deltaLine = container.append("p")
+    .style("text-align", "center")
+    .style("font-size", "0.85em")
+    .style("color", "#888")
+    .style("margin", "0 0 0.5em 0");
+  deltaLine.text(formatDelta(root));
+
   const svg = container.append("svg")
     .attr("viewBox", [-radius, -radius, width, width])
     .style("max-width", width + "px")
@@ -204,13 +241,13 @@ function renderSunburst(containerId, data, formatBytes) {
   const paths = pathGroup.selectAll("path")
     .data(root.descendants().filter(d => d.depth))
     .join("path")
-      .attr("fill", d => { let n = d; while (n.depth > 1) n = n.parent; return color(n.data.name); })
-      .attr("fill-opacity", d => { const r = d.depth - focus.depth; if (r === 0 && focus !== root) return 0.3; return r > 0 && r <= maxVisibleRings ? 0.9 - r * 0.15 : 0; })
+      .attr("fill", deltaColor)
+      .attr("fill-opacity", d => { const r = d.depth - focus.depth; if (r < 1 || r > maxVisibleRings) return 0; return deltaOpacity(d); })
       .attr("d", arc)
       .style("cursor", "pointer");
 
   paths.append("title")
-    .text(d => d.ancestors().map(a => a.data.name).reverse().join("/") + "\\n" + formatBytes(d.value));
+    .text(d => { let t = d.ancestors().map(a => a.data.name).reverse().join("/") + "\\n" + formatBytes(d.value); const dt = formatDelta(d); if (dt) t += "\\n" + dt; return t; });
 
   function labelTransform(d) {
     const angle = (d.current.x0 + d.current.x1) / 2;
@@ -275,6 +312,7 @@ function renderSunburst(containerId, data, formatBytes) {
     focus = p;
 
     breadcrumb.text(fullPath(p) + " (" + formatBytes(p.value) + ")");
+    deltaLine.text(formatDelta(p));
 
     // Remap y positions: show at most maxVisibleRings relative to the
     // clicked node, with the center circle shrunk to 2/3.
@@ -312,7 +350,7 @@ function renderSunburst(containerId, data, formatBytes) {
         return t => { d.current = i(t); };
       })
       .attrTween("d", d => () => currentArc(d))
-      .attr("fill-opacity", d => { const r = d.depth - p.depth; return r > 0 && r <= maxVisibleRings ? 0.9 - r * 0.15 : 0; });
+      .attr("fill-opacity", d => { const r = d.depth - p.depth; if (r < 1 || r > maxVisibleRings) return 0; return deltaOpacity(d); });
 
     // Fade labels out during transition, then rebuild after
     labelGroup.selectAll("text").transition(t).attr("fill-opacity", 0);
@@ -326,6 +364,22 @@ function formatBytes(n) {
   let u = -1;
   do { n /= 1024; u++; } while (n >= 1024 && u < units.length - 1);
   return n.toFixed(1) + " " + units[u];
+}
+
+function formatDelta(d) {
+  if (d.data.previousBytes == null) return "";
+  const current = d.value;
+  const previous = d.data.previousBytes;
+  const delta = current - previous;
+  if (delta === 0) return "No change since previous scan";
+  const absDelta = Math.abs(delta);
+  if (delta > 0) {
+    const pct = ((absDelta / current) * 100).toFixed(0);
+    return "Grown by " + formatBytes(absDelta) + " (" + pct + "% of current size)";
+  } else {
+    const pct = ((absDelta / previous) * 100).toFixed(0);
+    return "Shrank by " + formatBytes(absDelta) + " (" + pct + "% of original size)";
+  }
 }
 """
 

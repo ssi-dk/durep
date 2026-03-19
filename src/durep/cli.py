@@ -165,7 +165,9 @@ def execute(args: CliArgs) -> None:
     log.info("Wrote text report: %s", text_path)
 
     log.debug("Building drilldown tree (top_n=%d, max_depth=%d)", args.top_n, args.max_depth)
-    drilldown = build_drilldown_tree(current_run.root, uncompressed, args.top_n, args.max_depth)
+    drilldown = build_drilldown_tree(
+        current_run.root, uncompressed, args.top_n, args.max_depth, deltas
+    )
 
     growth_drilldown = None
     if deltas is not None:
