@@ -8,12 +8,14 @@ from pathlib import Path
 from typing import Sequence
 
 from durep.analytics import (
+    build_drilldown_tree,
+    build_growth_drilldown,
     compute_all_uncompressed_stats,
     compute_directory_deltas,
     compute_global_metrics,
 )
 from durep.ncdu import parse_ncdu_json_file
-from durep.reports import render_text_report
+from durep.reports import render_html_report, render_text_report
 
 log = logging.getLogger("durep")
 
@@ -159,7 +161,18 @@ def execute(args: CliArgs) -> None:
     text_path.write_text(text, encoding="utf-8")
     log.info("Wrote text report: %s", text_path)
 
-    # TODO: render HTML report and write overall.html
+    log.debug("Building drilldown tree (top_n=%d, max_depth=%d)", args.top_n, args.max_depth)
+    drilldown = build_drilldown_tree(current_root, uncompressed, args.top_n, args.max_depth)
+
+    growth_drilldown = None
+    if deltas is not None:
+        log.debug("Building growth drilldown")
+        growth_drilldown = build_growth_drilldown(current_root, deltas, args.top_n, args.max_depth)
+
+    html = render_html_report(drilldown, metrics, growth_drilldown, text)
+    html_path = out_dir / "overall.html"
+    html_path.write_text(html, encoding="utf-8")
+    log.info("Wrote HTML report: %s", html_path)
 
 
 def run(argv: Sequence[str] | None = None) -> int:
