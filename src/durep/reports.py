@@ -538,8 +538,8 @@ def render_overview_text_report(
         lines.append("No data.")
         return "\n".join(lines)
 
-    # Build a table: one row per project, latest size, earliest size, growth
-    rows: list[tuple[str, int, int, int, str]] = []
+    # Build a table: one row per project, latest size, earliest size, growth, compressible
+    rows: list[tuple[str, int, int, int, str, int]] = []
     for ts in series:
         # Find earliest and latest non-zero values
         earliest = 0
@@ -557,20 +557,23 @@ def render_overview_text_report(
         else:
             pct = "0.0%"
 
-        rows.append((ts.project, latest, earliest, growth, pct))
+        compressible = ts.uncompressed_values[-1].total_size if ts.uncompressed_values else 0
+
+        rows.append((ts.project, latest, earliest, growth, pct, compressible))
 
     # Sort by latest size descending
     rows.sort(key=lambda r: r[1], reverse=True)
 
     # Table header
     lines.append(
-        f"  {'Project':<40s}  {'Latest':>12s}  {'Earliest':>12s}  {'Growth':>12s}  {'%':>8s}"
+        f"  {'Project':<40s}  {'Latest':>12s}  {'Earliest':>12s}"
+        f"  {'Growth':>12s}  {'%':>8s}  {'Compressible':>14s}"
     )
-    for project, latest, earliest, growth, pct in rows:
+    for project, latest, earliest, growth, pct, compressible in rows:
         proj_display = project if len(project) <= 40 else "..." + project[-(40 - 3) :]
         lines.append(
             f"  {proj_display:<40s}  {format_bytes(latest):>12s}  {format_bytes(earliest):>12s}"
-            f"  {format_bytes(growth):>12s}  {pct:>8s}"
+            f"  {format_bytes(growth):>12s}  {pct:>8s}  {format_bytes(compressible):>14s}"
         )
     lines.append("")
 
@@ -649,10 +652,26 @@ function renderStackedArea(containerId, seriesData, formatBytes) {
     .append("title")
     .text(d => d.key);
 
-  // Axes
+  // Axes — adaptive tick resolution based on date span
+  const spanDays = (dates[dates.length - 1] - dates[0]) / (1000 * 60 * 60 * 24);
+  let tickInterval, tickFmt;
+  if (spanDays <= 30) {
+    tickInterval = d3.timeWeek.every(1);
+    tickFmt = d3.timeFormat("%b %d");
+  } else if (spanDays <= 180) {
+    tickInterval = d3.timeWeek.every(2);
+    tickFmt = d3.timeFormat("%b %d");
+  } else if (spanDays <= 365) {
+    tickInterval = d3.timeMonth.every(1);
+    tickFmt = d3.timeFormat("%b %Y");
+  } else {
+    tickInterval = d3.timeMonth.every(3);
+    tickFmt = d3.timeFormat("%b %Y");
+  }
+
   svg.append("g")
     .attr("transform", "translate(0," + height + ")")
-    .call(d3.axisBottom(x).ticks(d3.timeDay.every(1)).tickFormat(d3.timeFormat("%b %d")));
+    .call(d3.axisBottom(x).ticks(tickInterval).tickFormat(tickFmt));
 
   svg.append("g")
     .call(d3.axisLeft(y).ticks(6).tickFormat(d => formatBytes(d)));
@@ -711,6 +730,27 @@ function renderStackedArea(containerId, seriesData, formatBytes) {
 """
 
 
+def downsample_indices(n_days: int) -> list[int]:
+    """Return indices to keep when downsampling a daily series for chart rendering.
+
+    Picks a step size based on the span so the chart data stays compact:
+      <=60 days  -> every day
+      <=365 days -> every 7 days
+      else       -> every 14 days
+    Always includes the last index so the chart reaches the final date.
+    """
+    if n_days <= 60:
+        step = 1
+    elif n_days <= 365:
+        step = 7
+    else:
+        step = 14
+    indices = list(range(0, n_days, step))
+    if indices[-1] != n_days - 1:
+        indices.append(n_days - 1)
+    return indices
+
+
 def render_overview_html_report(
     series: list[ProjectTimeSeries],
     text_report: str,
@@ -720,9 +760,10 @@ def render_overview_html_report(
         projects: list[str] = []
         values: list[list[int]] = []
     else:
-        dates = [d.isoformat() for d in series[0].dates]
+        indices = downsample_indices(len(series[0].dates))
+        dates = [series[0].dates[i].isoformat() for i in indices]
         projects = [s.project for s in series]
-        values = [s.bytes_values for s in series]
+        values = [[s.bytes_values[i] for i in indices] for s in series]
 
     # Summary card values
     total_projects = len(series)
@@ -734,6 +775,9 @@ def render_overview_html_report(
                 total_earliest += v
                 break
     total_growth = total_latest - total_earliest
+    total_compressible = sum(
+        s.uncompressed_values[-1].total_size for s in series if s.uncompressed_values
+    )
 
     chart_data = json.dumps({"dates": dates, "projects": projects, "values": values})
 
@@ -774,6 +818,10 @@ def render_overview_html_report(
     <div class="card">
       <div class="label">Total growth</div>
       <div class="value">{html.escape(format_bytes(total_growth))}</div>
+    </div>
+    <div class="card">
+      <div class="label">Compressible files</div>
+      <div class="value">{html.escape(format_bytes(total_compressible))}</div>
     </div>
   </div>
 
