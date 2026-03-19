@@ -375,6 +375,8 @@ def test_overview_series_day_binning() -> None:
     ]
     # Forward-fill: day 2 gets day 1's value
     assert ts.bytes_values == [100, 100, 300]
+    # Only days 1 and 3 are actual measurements
+    assert ts.measured == [True, False, True]
 
 
 def test_overview_series_no_backward_fill() -> None:
@@ -424,4 +426,5 @@ def test_project_time_series_rejects_mismatched_lengths() -> None:
             dates=[datetime.date(2024, 1, 1)],
             bytes_values=[100, 200],
             uncompressed_values=[],
+            measured=[True],
         )

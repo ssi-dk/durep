@@ -381,7 +381,7 @@ class ProjectSample:
 
 
 class ProjectTimeSeries:
-    __slots__ = ("project", "dates", "bytes_values", "uncompressed_values")
+    __slots__ = ("project", "dates", "bytes_values", "uncompressed_values", "measured")
 
     def __init__(
         self,
@@ -389,17 +389,20 @@ class ProjectTimeSeries:
         dates: list[datetime.date],
         bytes_values: list[int],
         uncompressed_values: list[UncompressedStats],
+        measured: list[bool],
     ) -> None:
-        if not (len(dates) == len(bytes_values) == len(uncompressed_values)):
+        if not (len(dates) == len(bytes_values) == len(uncompressed_values) == len(measured)):
             raise ValueError(
                 f"ProjectTimeSeries list lengths must match: "
                 f"dates={len(dates)}, bytes_values={len(bytes_values)}, "
-                f"uncompressed_values={len(uncompressed_values)}"
+                f"uncompressed_values={len(uncompressed_values)}, "
+                f"measured={len(measured)}"
             )
         self.project = project
         self.dates = dates
         self.bytes_values = bytes_values
         self.uncompressed_values = uncompressed_values
+        self.measured = measured
 
 
 def extract_project_sample(run: NcduRun) -> ProjectSample:
@@ -452,6 +455,7 @@ def build_overview_series(
         day_map = by_project[project]
         bytes_values: list[int] = []
         uncompressed_values: list[UncompressedStats] = []
+        measured: list[bool] = []
         last_bytes: int | None = None
         last_uncompressed: UncompressedStats | None = None
 
@@ -460,8 +464,12 @@ def build_overview_series(
             if sample is not None:
                 last_bytes = sample.total_bytes
                 last_uncompressed = sample.uncompressed
+                measured.append(True)
+            elif last_bytes is None:
+                measured.append(False)
+            else:
+                measured.append(False)
             if last_bytes is None:
-                # No data yet for this project (before first appearance)
                 bytes_values.append(0)
                 uncompressed_values.append(UncompressedStats.zero())
             else:
@@ -475,6 +483,7 @@ def build_overview_series(
                 dates=list(date_range),
                 bytes_values=bytes_values,
                 uncompressed_values=uncompressed_values,
+                measured=measured,
             )
         )
 

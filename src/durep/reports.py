@@ -598,6 +598,7 @@ function renderStackedArea(containerId, seriesData, formatBytes) {
   const dates = seriesData.dates.map(d => parseDate(d));
   const projects = seriesData.projects;
   const values = seriesData.values;
+  const measured = seriesData.measured;
 
   // Build stacked data: array of {date, project1: bytes, project2: bytes, ...}
   const tableData = dates.map((d, i) => {
@@ -651,6 +652,27 @@ function renderStackedArea(containerId, seriesData, formatBytes) {
     .attr("d", area)
     .append("title")
     .text(d => d.key);
+
+  // Dots at measured (non-interpolated) points
+  stackedData.forEach(layer => {
+    const projKey = layer.key;
+    const pi = projects.indexOf(projKey);
+    const projMeasured = measured[pi];
+    // Build [{dateIdx, d}] for measured points with non-zero area
+    const dots = [];
+    layer.forEach((d, i) => {
+      if (projMeasured[i] && d[1] > d[0]) dots.push({i: i, d: d});
+    });
+    svg.selectAll(null)
+      .data(dots)
+      .join("circle")
+      .attr("cx", pt => x(dates[pt.i]))
+      .attr("cy", pt => y(pt.d[1]))
+      .attr("r", 3)
+      .attr("fill", color(projKey))
+      .attr("stroke", "#fff")
+      .attr("stroke-width", 0.5);
+  });
 
   // Axes — adaptive tick resolution based on date span
   const spanDays = (dates[dates.length - 1] - dates[0]) / (1000 * 60 * 60 * 24);
@@ -734,14 +756,11 @@ def downsample_indices(n_days: int) -> list[int]:
     """Return indices to keep when downsampling a daily series for chart rendering.
 
     Picks a step size based on the span so the chart data stays compact:
-      <=60 days  -> every day
       <=365 days -> every 7 days
       else       -> every 14 days
     Always includes the last index so the chart reaches the final date.
     """
-    if n_days <= 60:
-        step = 1
-    elif n_days <= 365:
+    if n_days <= 365:
         step = 7
     else:
         step = 14
@@ -759,11 +778,13 @@ def render_overview_html_report(
         dates: list[str] = []
         projects: list[str] = []
         values: list[list[int]] = []
+        measured: list[list[bool]] = []
     else:
         indices = downsample_indices(len(series[0].dates))
         dates = [series[0].dates[i].isoformat() for i in indices]
         projects = [s.project for s in series]
         values = [[s.bytes_values[i] for i in indices] for s in series]
+        measured = [[s.measured[i] for i in indices] for s in series]
 
     # Summary card values
     total_projects = len(series)
@@ -779,7 +800,14 @@ def render_overview_html_report(
         s.uncompressed_values[-1].total_size for s in series if s.uncompressed_values
     )
 
-    chart_data = json.dumps({"dates": dates, "projects": projects, "values": values})
+    chart_data = json.dumps(
+        {
+            "dates": dates,
+            "projects": projects,
+            "values": values,
+            "measured": measured,
+        }
+    )
 
     return f"""\
 <!doctype html>
