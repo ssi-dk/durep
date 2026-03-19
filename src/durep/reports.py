@@ -87,27 +87,73 @@ def render_text_report(
     if deltas is None:
         lines.append("  Previous scan not available.")
     else:
-        net = sum(d.delta_bytes for d in deltas.values())
+        direct_deltas = _compute_direct_deltas(root, deltas)
+        net = sum(d.delta_bytes for d in deltas.values() if d.path == root.path)
         lines.append(f"  Net change: {format_bytes(net)}")
         lines.append("")
 
-        sorted_deltas = sorted(deltas.values(), key=lambda d: d.delta_bytes, reverse=True)
-        growing = [d for d in sorted_deltas if d.delta_bytes > 0]
-        shrinking = [d for d in reversed(sorted_deltas) if d.delta_bytes < 0]
+        growing = sorted(
+            [(d, dd) for d, dd in direct_deltas if dd > 0],
+            key=lambda pair: pair[1],
+            reverse=True,
+        )
+        shrinking = sorted(
+            [(d, dd) for d, dd in direct_deltas if dd < 0],
+            key=lambda pair: pair[1],
+        )
 
         if growing:
-            lines.append(f"  Top {min(top_n, len(growing))} growing paths")
-            for d in growing[:top_n]:
-                lines.append(f"    {'+' + format_bytes(d.delta_bytes):>13s}  {d.path}")
+            lines.append(
+                f"  Top {min(top_n, len(growing))} growing directories (by direct file size)"
+            )
+            for d, direct in growing[:top_n]:
+                lines.append(
+                    f"    {'+' + format_bytes(direct):>13s}"
+                    f"  {'+' + format_bytes(d.delta_bytes):>13s} total"
+                    f"  {d.path}"
+                )
             lines.append("")
 
         if shrinking:
-            lines.append(f"  Top {min(top_n, len(shrinking))} shrinking paths")
-            for d in shrinking[:top_n]:
-                lines.append(f"    {format_bytes(d.delta_bytes):>13s}  {d.path}")
+            lines.append(
+                f"  Top {min(top_n, len(shrinking))} shrinking directories (by direct file size)"
+            )
+            for d, direct in shrinking[:top_n]:
+                lines.append(
+                    f"    {format_bytes(direct):>13s}"
+                    f"  {format_bytes(d.delta_bytes):>13s} total"
+                    f"  {d.path}"
+                )
             lines.append("")
 
     return "\n".join(lines)
+
+
+def _compute_direct_deltas(
+    root: NcduNode, deltas: dict[Path, PathDelta]
+) -> list[tuple[PathDelta, int]]:
+    """Compute the direct (self) delta for each directory.
+
+    For each directory, subtract child directory delta contributions
+    to isolate the change from its own direct files.
+    """
+    result: list[tuple[PathDelta, int]] = []
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.node_type == "dir":
+            delta = deltas.get(node.path)
+            if delta is not None:
+                child_dir_delta = sum(
+                    deltas[c.path].delta_bytes
+                    for c in node.children
+                    if c.node_type == "dir" and c.path in deltas
+                )
+                direct = delta.delta_bytes - child_dir_delta
+                if direct != 0:
+                    result.append((delta, direct))
+            stack.extend(node.children)
+    return result
 
 
 def _collect_dirs_by_direct_bytes(root: NcduNode) -> list[tuple[NcduNode, int]]:

@@ -22,8 +22,7 @@ log = logging.getLogger("durep")
 
 @dataclass(slots=True)
 class CliArgs:
-    current: Path
-    previous: Path | None
+    scans: list[Path]
     out_dir: Path
     top_n: int
     max_depth: int
@@ -31,17 +30,15 @@ class CliArgs:
     @classmethod
     def from_namespace(cls, namespace: argparse.Namespace) -> CliArgs:
         return cls(
-            current=Path(namespace.current),
-            previous=Path(namespace.previous) if namespace.previous else None,
+            scans=[Path(p) for p in namespace.scan],
             out_dir=Path(namespace.out_dir),
             top_n=namespace.top_n,
             max_depth=namespace.max_depth,
         )
 
     def validate(self) -> None:
-        require_file(self.current, "current")
-        if self.previous is not None:
-            require_file(self.previous, "previous")
+        for scan in self.scans:
+            require_file(scan, str(scan))
 
 
 def positive_int(value: str) -> int:
@@ -55,11 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Generate disk usage reports from ncdu JSON scans."
     )
-    parser.add_argument("--current", required=True, help="Current ncdu JSON scan path.")
     parser.add_argument(
-        "--previous",
-        required=False,
-        help="Previous ncdu JSON scan path used for diff calculations.",
+        "scan",
+        nargs="+",
+        help="One or two ncdu JSON scan paths."
+        " When two are given, timestamps determine which is current vs previous.",
     )
     parser.add_argument("--out-dir", required=True, help="Output directory for generated reports.")
     parser.add_argument(
@@ -119,9 +116,32 @@ def configure_logging(cli_value: str | None) -> None:
 
 
 def parse_and_validate_args(namespace: argparse.Namespace) -> CliArgs:
+    if len(namespace.scan) > 2:
+        raise ValueError("at most two scan files may be provided")
     args = CliArgs.from_namespace(namespace)
     args.validate()
     return args
+
+
+def order_runs(run_a: NcduRun, run_b: NcduRun) -> tuple[NcduRun, NcduRun]:
+    """Return (current_run, previous_run) based on timestamps.
+
+    Raises ValueError if either run is missing a timestamp.
+    """
+    if run_a.timestamp is None or run_b.timestamp is None:
+        missing = []
+        if run_a.timestamp is None:
+            missing.append(str(run_a.root.path))
+        if run_b.timestamp is None:
+            missing.append(str(run_b.root.path))
+        raise ValueError(
+            "cannot determine scan order: missing timestamp in "
+            + ", ".join(missing)
+            + ". Both scans must contain a timestamp when comparing two files."
+        )
+    if run_a.timestamp >= run_b.timestamp:
+        return run_a, run_b
+    return run_b, run_a
 
 
 def execute(args: CliArgs) -> None:
@@ -131,23 +151,33 @@ def execute(args: CliArgs) -> None:
     out_dir.mkdir(parents=True)
     log.info("Output directory: %s", out_dir)
 
-    log.info("Parsing current scan: %s", args.current)
-    current_run = parse_ncdu_json_file(args.current)
+    log.info("Parsing scan: %s", args.scans[0])
+    run_a = parse_ncdu_json_file(args.scans[0])
     log.debug(
-        "Current scan: %d files, %d directories",
-        current_run.root.total_files,
-        current_run.root.total_directories,
+        "Scan: %d files, %d directories",
+        run_a.root.total_files,
+        run_a.root.total_directories,
     )
 
     previous_run: NcduRun | None = None
-    if args.previous is not None:
-        log.info("Parsing previous scan: %s", args.previous)
-        previous_run = parse_ncdu_json_file(args.previous)
+    if len(args.scans) == 2:
+        log.info("Parsing scan: %s", args.scans[1])
+        run_b = parse_ncdu_json_file(args.scans[1])
         log.debug(
-            "Previous scan: %d files, %d directories",
-            previous_run.root.total_files,
-            previous_run.root.total_directories,
+            "Scan: %d files, %d directories",
+            run_b.root.total_files,
+            run_b.root.total_directories,
         )
+
+        if run_a.root.path != run_b.root.path:
+            raise ValueError(
+                f"root directories do not match: {run_a.root.path} vs {run_b.root.path}."
+                " Both scans must be of the same directory."
+            )
+
+        current_run, previous_run = order_runs(run_a, run_b)
+    else:
+        current_run = run_a
 
     log.debug("Computing uncompressed stats")
     uncompressed = compute_all_uncompressed_stats(current_run.root)
@@ -155,9 +185,9 @@ def execute(args: CliArgs) -> None:
 
     deltas = None
     if previous_run is not None:
-        log.debug("Computing directory deltas")
+        log.debug("Computing deltas")
         deltas = compute_directory_deltas(current_run.root, previous_run.root)
-        log.info("Computed deltas for %d directories", len(deltas))
+        log.info("Computed deltas for %d paths", len(deltas))
 
     text = render_text_report(current_run, previous_run, metrics, deltas, args.top_n)
     text_path = out_dir / "text_report.txt"
@@ -198,7 +228,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         args = parse_and_validate_args(namespace)
         execute(args)
         raise SystemExit(0)
-    except (FileNotFoundError, FileExistsError) as exc:
+    except (FileNotFoundError, FileExistsError, ValueError) as exc:
         parser.exit(status=1, message=f"error: {exc}\n")
 
 
