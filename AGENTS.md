@@ -35,3 +35,6 @@ Open the generated `overall.html` in a browser and verify:
 * Never add an AI agent as a co-author on commits
 * Do not prepend single underscores to names; the only API is the CLI, so all functions are private
 * After making changes, run `ruff check .` and address warnings, then run `ruff format .`
+
+## Other notes:
+* The only stable API is the CLI, so any source-code level changes are considered non-breaking.

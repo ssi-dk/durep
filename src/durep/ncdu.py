@@ -34,39 +34,31 @@ class NcduRun:
 def parse_ncdu_json_file(path: Path) -> NcduRun:
     with path.open("r", encoding="utf-8") as handle:
         data = json.load(handle)
-    return parse_ncdu_json_data(data)
 
+    error_prefix = f"Invalid NCDU JSON file at {str(path)}: "
 
-def parse_ncdu_json_data(data: Any) -> NcduRun:
-    tree = extract_root_tree(data)
-    root = parse_dir_tree(tree=tree, parent_path=None)
-    timestamp = extract_timestamp(data)
-    return NcduRun(root=root, timestamp=timestamp)
+    # Per NCDU format, the JSON object is a list with the first two fields
+    # being major and minor versions. Check the version, because otherwise
+    # we don't know how to parse it.
+    if not (isinstance(data, list) and len(data) > 3 and isinstance(data[0], int) and data[0] == 1):
+        raise ValueError(error_prefix + "NCDU JSON file is not a valid version 1 NCDU format file")
+    else:
+        # More fields could be added in a minor version so only check first four
+        (_, _, metadata, root) = data[:4]
 
+    # Extract timestamp
+    if not (isinstance(metadata, dict) and ("timestamp" in metadata)):
+        raise ValueError(error_prefix + "Does not contain expected timestamp field in metadata")
 
-# NCDU JSON's top-level data is a list with multiple metadata, and then one root tree.
-# Identify the root tree, if metadata is present.
-def extract_root_tree(data: Any) -> list[Any]:
-    if is_dir_tree(data):
-        return data
-    # Else, we expect metadata to go before the root tree, and there to be only one root tree.
-    if isinstance(data, list):
-        for item in reversed(data):
-            if is_dir_tree(item):
-                return item
-    raise ValueError("Unable to locate an ncdu directory tree in JSON data")
+    try:
+        timestamp = datetime.fromtimestamp(int(metadata["timestamp"]), tz=timezone.utc)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(error_prefix + "could not parse timestamp as POSIX timestamp")
 
+    if not is_dir_tree(root):
+        raise ValueError("Fourth field (root directory) is not a valid directory in NCDU format")
 
-def extract_timestamp(data: Any) -> datetime | None:
-    if not isinstance(data, list):
-        return None
-    for item in data:
-        if isinstance(item, dict) and "timestamp" in item:
-            try:
-                return datetime.fromtimestamp(int(item["timestamp"]), tz=timezone.utc)
-            except (TypeError, ValueError, OverflowError):
-                return None
-    return None
+    return NcduRun(root=parse_dir_tree(root, parent_path=None), timestamp=timestamp)
 
 
 def is_dir_tree(value: Any) -> bool:
@@ -133,12 +125,8 @@ def parse_file_entry(entry: dict[str, Any], parent_path: Path) -> NcduNode:
 
 def parse_sizes(entry: dict[str, Any]) -> ParsedSizes:
     apparent_size = parse_non_negative_int(entry.get("asize", 0), field_name="asize")
-    if entry.get("dsize") is not None:
-        return ParsedSizes(
-            apparent_size=apparent_size,
-            disk_size=parse_non_negative_int(entry.get("dsize"), field_name="dsize"),
-        )
-    return ParsedSizes(apparent_size=apparent_size, disk_size=apparent_size)
+    disk_size = parse_non_negative_int(entry.get("dsize", 0), field_name="dsize")
+    return ParsedSizes(apparent_size=apparent_size, disk_size=disk_size)
 
 
 def get_required_name(entry: dict[str, Any]) -> str:
