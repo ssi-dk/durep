@@ -191,6 +191,8 @@ def drilldown_to_d3(node: DrilldownNode) -> dict[str, Any]:
         result["children"] = children
     else:
         result["value"] = node.total_bytes
+        if node.uncompressed.total_size > 0 and node.total_bytes > 0:
+            result["compressibleRatio"] = node.uncompressed.total_size / node.total_bytes
     return result
 
 
@@ -201,7 +203,15 @@ function renderSunburst(containerId, data, formatBytes) {
 
   const RED = "#d9534f";
   const BLUE = "#5bc0de";
+  const DARK_RED = "#ab3a3a";
+  const COMPRESSIBLE_THRESHOLD = 0.2;
+
+  function isCompressible(d) {
+    return d.data.compressibleRatio != null && d.data.compressibleRatio >= COMPRESSIBLE_THRESHOLD;
+  }
+
   function deltaColor(d) {
+    if (isCompressible(d)) return DARK_RED;
     if (d.data.previousBytes != null) {
       return d.value > d.data.previousBytes ? RED : BLUE;
     }
@@ -210,6 +220,7 @@ function renderSunburst(containerId, data, formatBytes) {
   }
 
   function deltaOpacity(d) {
+    if (isCompressible(d)) return 1;
     if (d.data.previousBytes == null) return 0.5;
     const cur = d.value;
     const prev = d.data.previousBytes;
