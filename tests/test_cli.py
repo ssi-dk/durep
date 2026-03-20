@@ -159,8 +159,8 @@ def test_overview_multiple_scans(tmp_path: Path) -> None:
 
     assert exit_code == 0
     text = (out_dir / "text_report.txt").read_text(encoding="utf-8")
-    assert "/proj_a" in text
-    assert "/proj_b" in text
+    assert "proj_a" in text
+    assert "proj_b" in text
 
 
 def test_overview_rejects_missing_file(tmp_path: Path) -> None:

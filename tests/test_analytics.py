@@ -312,7 +312,7 @@ def test_extract_project_sample_basic() -> None:
     run = make_run("/proj", dsize=500, timestamp_epoch=1700000000)
     sample = extract_project_sample(run)
 
-    assert sample.project == "/proj"
+    assert sample.project == "proj"
     assert sample.date == datetime.date(2023, 11, 14)
     assert sample.total_bytes == 500
     assert sample.total_files == 1
@@ -373,13 +373,13 @@ def test_overview_series_day_binning() -> None:
         datetime.date(2024, 1, 2),
         datetime.date(2024, 1, 3),
     ]
-    # Forward-fill: day 2 gets day 1's value
-    assert ts.bytes_values == [100, 100, 300]
+    # Linear interpolation: day 2 gets midpoint between day 1 and day 3
+    assert ts.bytes_values == [100, 200, 300]
     # Only days 1 and 3 are actual measurements
     assert ts.measured == [True, False, True]
 
 
-def test_overview_series_no_backward_fill() -> None:
+def test_overview_series_back_fills_before_first_measurement() -> None:
     samples = [
         make_sample("/early", datetime.date(2024, 1, 1), 100),
         make_sample("/late", datetime.date(2024, 1, 3), 200),
@@ -390,9 +390,9 @@ def test_overview_series_no_backward_fill() -> None:
     early = next(s for s in series if s.project == "/early")
     late = next(s for s in series if s.project == "/late")
 
-    # /late should have 0 for days 1 and 2 (no backward fill)
-    assert late.bytes_values[0] == 0
-    assert late.bytes_values[1] == 0
+    # /late back-fills days before first measurement with first measured value
+    assert late.bytes_values[0] == 200
+    assert late.bytes_values[1] == 200
     assert late.bytes_values[2] == 200
 
     # /early should forward-fill into days 2 and 3

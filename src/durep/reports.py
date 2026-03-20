@@ -777,22 +777,16 @@ function renderStackedArea(containerId, seriesData, formatBytes) {
 """
 
 
-def downsample_indices(n_days: int) -> list[int]:
-    """Return indices to keep when downsampling a daily series for chart rendering.
-
-    Picks a step size based on the span so the chart data stays compact:
-      <=365 days -> every 7 days
-      else       -> every 14 days
-    Always includes the last index so the chart reaches the final date.
-    """
-    if n_days <= 365:
-        step = 7
-    else:
-        step = 14
-    indices = list(range(0, n_days, step))
-    if indices[-1] != n_days - 1:
-        indices.append(n_days - 1)
-    return indices
+def downsample_indices(series: list[ProjectTimeSeries]) -> list[int]:
+    """Return indices where any series has a real measurement."""
+    if not series:
+        return []
+    keep: set[int] = set()
+    for s in series:
+        for i, m in enumerate(s.measured):
+            if m:
+                keep.add(i)
+    return sorted(keep)
 
 
 def render_overview_html_report(
@@ -805,7 +799,7 @@ def render_overview_html_report(
         values: list[list[int]] = []
         measured: list[list[bool]] = []
     else:
-        indices = downsample_indices(len(series[0].dates))
+        indices = downsample_indices(series)
         dates = [series[0].dates[i].isoformat() for i in indices]
         projects = [s.project for s in series]
         values = [[s.bytes_values[i] for i in indices] for s in series]

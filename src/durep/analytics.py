@@ -410,7 +410,7 @@ def extract_project_sample(run: NcduRun) -> ProjectSample:
         raise ValueError(f"scan for {run.root.path} has no timestamp; overview requires timestamps")
     uncompressed = compute_all_uncompressed_stats(run.root)
     return ProjectSample(
-        project=str(run.root.path),
+        project=run.root.path.name,
         timestamp=run.timestamp,
         date=run.timestamp.date(),
         total_bytes=run.root.total_bytes,
@@ -449,33 +449,62 @@ def build_overview_series(
         date_range.append(current)
         current += one_day
 
-    # Build time series per project with forward-fill, no backward-fill
+    # Build time series per project with interpolation:
+    #   - Before first measurement: back-fill with first measured value
+    #   - Between measurements: linear interpolation (bytes), nearest for uncompressed
+    #   - After last measurement: forward-fill with last measured value
     result: list[ProjectTimeSeries] = []
+    n_days = len(date_range)
     for project in sorted(by_project):
         day_map = by_project[project]
-        bytes_values: list[int] = []
-        uncompressed_values: list[UncompressedStats] = []
-        measured: list[bool] = []
-        last_bytes: int | None = None
-        last_uncompressed: UncompressedStats | None = None
 
-        for date in date_range:
+        # Collect measured indices and their values
+        measured_indices: list[int] = []
+        measured_bytes: list[int] = []
+        measured_uncompressed: list[UncompressedStats] = []
+        for i, date in enumerate(date_range):
             sample = day_map.get(date)
             if sample is not None:
-                last_bytes = sample.total_bytes
-                last_uncompressed = sample.uncompressed
-                measured.append(True)
-            elif last_bytes is None:
-                measured.append(False)
-            else:
-                measured.append(False)
-            if last_bytes is None:
-                bytes_values.append(0)
-                uncompressed_values.append(UncompressedStats.zero())
-            else:
-                bytes_values.append(last_bytes)
-                assert last_uncompressed is not None
-                uncompressed_values.append(last_uncompressed)
+                measured_indices.append(i)
+                measured_bytes.append(sample.total_bytes)
+                measured_uncompressed.append(sample.uncompressed)
+
+        measured: list[bool] = [False] * n_days
+        bytes_values: list[int] = [0] * n_days
+        uncompressed_values: list[UncompressedStats] = [UncompressedStats.zero()] * n_days
+
+        if measured_indices:
+            # Mark measured points
+            for k, i in enumerate(measured_indices):
+                measured[i] = True
+                bytes_values[i] = measured_bytes[k]
+                uncompressed_values[i] = measured_uncompressed[k]
+
+            # Back-fill before first measurement
+            first = measured_indices[0]
+            for i in range(first):
+                bytes_values[i] = measured_bytes[0]
+                uncompressed_values[i] = measured_uncompressed[0]
+
+            # Forward-fill after last measurement
+            last = measured_indices[-1]
+            for i in range(last + 1, n_days):
+                bytes_values[i] = measured_bytes[-1]
+                uncompressed_values[i] = measured_uncompressed[-1]
+
+            # Linearly interpolate between measured points
+            for k in range(len(measured_indices) - 1):
+                i0 = measured_indices[k]
+                i1 = measured_indices[k + 1]
+                b0 = measured_bytes[k]
+                b1 = measured_bytes[k + 1]
+                span = i1 - i0
+                for i in range(i0 + 1, i1):
+                    t = (i - i0) / span
+                    bytes_values[i] = round(b0 + t * (b1 - b0))
+                    uncompressed_values[i] = interpolate_uncompressed(
+                        measured_uncompressed[k], measured_uncompressed[k + 1], t
+                    )
 
         result.append(
             ProjectTimeSeries(
@@ -488,3 +517,14 @@ def build_overview_series(
         )
 
     return result
+
+
+def interpolate_uncompressed(
+    a: UncompressedStats, b: UncompressedStats, t: float
+) -> UncompressedStats:
+    return UncompressedStats(
+        fasta=round(a.fasta + t * (b.fasta - a.fasta)),
+        fastq=round(a.fastq + t * (b.fastq - a.fastq)),
+        vcf=round(a.vcf + t * (b.vcf - a.vcf)),
+        sam=round(a.sam + t * (b.sam - a.sam)),
+    )
