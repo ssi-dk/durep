@@ -80,7 +80,17 @@ class NcduDir:
     children: list[NcduEntry] = field(default_factory=list)
 
 
-NcduEntry = NcduDir | NcduFile
+@dataclass(slots=True)
+class CollapsedNode:
+    basename: str
+    parent: NcduDir
+    count: int
+    disk_size: int
+    total_bytes: int
+    uncompressed: UncompressedStats
+
+
+NcduEntry = NcduDir | NcduFile | CollapsedNode
 
 
 def path_str(node: NcduEntry) -> str:
@@ -88,7 +98,7 @@ def path_str(node: NcduEntry) -> str:
     current: NcduEntry = node
     while True:
         parts.append(current.basename)
-        if isinstance(current, NcduFile):
+        if isinstance(current, (NcduFile, CollapsedNode)):
             current = current.parent
         elif current.parent is not None:
             current = current.parent
@@ -117,14 +127,14 @@ class NcduRun:
 Event = tuple[str, Any]
 
 
-def parse_ncdu_json_file(path: Path) -> NcduRun:
+def parse_ncdu_json_file(path: Path, top_n: int | None = None) -> NcduRun:
     error_prefix = f"Invalid NCDU JSON file at {str(path)}: "
 
     with path.open("rb") as handle:
         parser: Iterator[Event] = ijson.basic_parse(handle)
         try:
             timestamp = parse_header(parser, error_prefix)
-            root = parse_tree_streaming(parser)
+            root = parse_tree_streaming(parser, top_n=top_n)
         except ijson.JSONError as exc:
             raise ValueError(
                 error_prefix + "NCDU JSON file is not a valid version 1 NCDU format file"
@@ -176,7 +186,43 @@ def parse_header(parser: Iterator[Event], error_prefix: str) -> datetime:
     return timestamp
 
 
-def parse_tree_streaming(parser: Iterator[Event]) -> NcduDir:
+def collapse_children(directory: NcduDir, top_n: int) -> None:
+    if len(directory.children) <= top_n:
+        return
+    directory.children.sort(key=lambda c: c.total_bytes, reverse=True)
+    kept = directory.children[:top_n]
+    remainder = directory.children[top_n:]
+
+    total_disk = 0
+    total_bytes = 0
+    count = 0
+    agg = UncompressedStats.zero()
+    for c in remainder:
+        total_disk += c.disk_size
+        total_bytes += c.total_bytes
+        agg.fasta += c.uncompressed.fasta
+        agg.fastq += c.uncompressed.fastq
+        agg.vcf += c.uncompressed.vcf
+        agg.sam += c.uncompressed.sam
+        if isinstance(c, CollapsedNode):
+            count += c.count
+        elif isinstance(c, NcduDir):
+            count += c.total_files + c.total_directories
+        else:
+            count += 1
+
+    collapsed = CollapsedNode(
+        basename=f"({count} collapsed entries)",
+        parent=directory,
+        count=count,
+        disk_size=total_disk,
+        total_bytes=total_bytes,
+        uncompressed=agg,
+    )
+    directory.children = kept + [collapsed]
+
+
+def parse_tree_streaming(parser: Iterator[Event], top_n: int | None = None) -> NcduDir:
     dir_stack: list[NcduDir] = []
     awaiting_dir_metadata = False
     current_map: dict[str, Any] = {}
@@ -236,6 +282,8 @@ def parse_tree_streaming(parser: Iterator[Event]) -> NcduDir:
         elif event == "end_array":
             if dir_stack:
                 finished = dir_stack.pop()
+                if top_n is not None:
+                    collapse_children(finished, top_n)
                 if dir_stack:
                     parent = dir_stack[-1]
                     parent.children.append(finished)

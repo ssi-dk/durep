@@ -189,7 +189,7 @@ def execute_detail(args: DetailArgs) -> None:
     log.info("Output directory: %s", out_dir)
 
     log.info("Parsing scan: %s", args.scans[0])
-    run_a = parse_ncdu_json_file(args.scans[0])
+    run_a = parse_ncdu_json_file(args.scans[0], top_n=args.top_n)
     log.debug(
         "Scan: %d files, %d directories",
         run_a.root.total_files,
@@ -199,7 +199,7 @@ def execute_detail(args: DetailArgs) -> None:
     previous_run: NcduRun | None = None
     if len(args.scans) == 2:
         log.info("Parsing scan: %s", args.scans[1])
-        run_b = parse_ncdu_json_file(args.scans[1])
+        run_b = parse_ncdu_json_file(args.scans[1], top_n=args.top_n)
         log.debug(
             "Scan: %d files, %d directories",
             run_b.root.total_files,

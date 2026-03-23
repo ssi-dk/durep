@@ -8,7 +8,7 @@ import pytest
 
 from collections.abc import Sequence
 
-from durep.ncdu import NcduDir, NcduFile, full_path, parse_ncdu_json_file
+from durep.ncdu import CollapsedNode, NcduDir, NcduFile, full_path, parse_ncdu_json_file
 
 
 def write_ncdu_json(path: Path, root: Sequence[object], timestamp: int = 1700000000) -> None:
@@ -148,3 +148,77 @@ def test_parse_ncdu_json_file_directory_only_children(tmp_path: Path) -> None:
     assert root.total_bytes == 24
     assert len(root.children) == 2
     assert all(isinstance(c, NcduDir) for c in root.children)
+
+
+def test_parse_with_top_n_collapses_excess_children(tmp_path: Path) -> None:
+    root_tree = [
+        {"name": "/", "dsize": 0},
+        {"name": "big.bin", "dsize": 500},
+        {"name": "medium.bin", "dsize": 300},
+        {"name": "small1.bin", "dsize": 100},
+        {"name": "small2.bin", "dsize": 50},
+        {"name": "small3.bin", "dsize": 10},
+    ]
+
+    source = tmp_path / "snapshot.json"
+    write_ncdu_json(source, root_tree)
+    run = parse_ncdu_json_file(source, top_n=2)
+
+    root = run.root
+    # 2 kept + 1 collapsed node = 3 children
+    assert len(root.children) == 3
+    assert isinstance(root.children[0], NcduFile)
+    assert root.children[0].basename == "big.bin"
+    assert isinstance(root.children[1], NcduFile)
+    assert root.children[1].basename == "medium.bin"
+
+    collapsed = root.children[2]
+    assert isinstance(collapsed, CollapsedNode)
+    assert collapsed.count == 3
+    assert collapsed.total_bytes == 160  # 100 + 50 + 10
+
+    # Aggregates should be preserved
+    assert root.total_bytes == 960
+    assert root.total_files == 5
+
+
+def test_parse_with_top_n_none_does_not_collapse(tmp_path: Path) -> None:
+    root_tree = [
+        {"name": "/", "dsize": 0},
+        {"name": "a.bin", "dsize": 10},
+        {"name": "b.bin", "dsize": 20},
+        {"name": "c.bin", "dsize": 30},
+    ]
+
+    source = tmp_path / "snapshot.json"
+    write_ncdu_json(source, root_tree)
+    run = parse_ncdu_json_file(source, top_n=None)
+
+    assert len(run.root.children) == 3
+    assert all(isinstance(c, NcduFile) for c in run.root.children)
+
+
+def test_parse_with_top_n_preserves_uncompressed_stats(tmp_path: Path) -> None:
+    root_tree = [
+        {"name": "/", "dsize": 0},
+        {"name": "big.fastq", "dsize": 500},
+        {"name": "small1.fasta", "dsize": 100},
+        {"name": "small2.sam", "dsize": 50},
+    ]
+
+    source = tmp_path / "snapshot.json"
+    write_ncdu_json(source, root_tree)
+    run = parse_ncdu_json_file(source, top_n=1)
+
+    root = run.root
+    assert len(root.children) == 2  # 1 kept + 1 collapsed
+
+    collapsed = root.children[1]
+    assert isinstance(collapsed, CollapsedNode)
+    assert collapsed.uncompressed.fasta == 100
+    assert collapsed.uncompressed.sam == 50
+
+    # Root uncompressed totals still correct
+    assert root.uncompressed.fastq == 500
+    assert root.uncompressed.fasta == 100
+    assert root.uncompressed.sam == 50

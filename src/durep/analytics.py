@@ -6,7 +6,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from durep.ncdu import NcduDir, NcduEntry, NcduFile, NcduRun, UncompressedStats, full_path, path_str
+from durep.ncdu import (
+    CollapsedNode,
+    NcduDir,
+    NcduEntry,
+    NcduFile,
+    NcduRun,
+    UncompressedStats,
+    full_path,
+    path_str,
+)
 
 
 # Metrics reported for one project or user
@@ -125,10 +134,10 @@ def _build_drilldown(
     delta = deltas.get(node_key) if deltas else None
     prev = delta.previous_bytes if delta else None
 
-    if isinstance(node, NcduFile) or depth >= max_depth:
+    if isinstance(node, (NcduFile, CollapsedNode)) or depth >= max_depth:
         return DrilldownNode(
             path=node_path,
-            node_type="file" if isinstance(node, NcduFile) else "dir",
+            node_type="file" if isinstance(node, (NcduFile, CollapsedNode)) else "dir",
             total_bytes=node.total_bytes,
             uncompressed=node.uncompressed,
             previous_bytes=prev,
@@ -138,7 +147,7 @@ def _build_drilldown(
     # synthetic node so that files from deeper levels don't leak into this ring.
     at_depth_limit = depth == max_depth - 1
 
-    file_children = [c for c in node.children if isinstance(c, NcduFile)]
+    file_children = [c for c in node.children if isinstance(c, (NcduFile, CollapsedNode))]
     dir_children = [c for c in node.children if isinstance(c, NcduDir)]
 
     if at_depth_limit and dir_children:
@@ -268,10 +277,10 @@ def _build_delta_node(
     if magnitude <= 0:
         return None
 
-    if isinstance(node, NcduFile) or depth >= max_depth:
+    if isinstance(node, (NcduFile, CollapsedNode)) or depth >= max_depth:
         return DrilldownNode(
             path=node_path,
-            node_type="file" if isinstance(node, NcduFile) else "dir",
+            node_type="file" if isinstance(node, (NcduFile, CollapsedNode)) else "dir",
             total_bytes=magnitude,
             uncompressed=UncompressedStats.zero(),
         )
