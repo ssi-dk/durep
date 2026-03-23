@@ -16,7 +16,7 @@ from durep.analytics import (
     compute_global_metrics,
     extract_project_sample,
 )
-from durep.ncdu import NcduRun, parse_ncdu_json_file
+from durep.ncdu import NcduRun, full_path, parse_ncdu_json_file
 from durep.reports import (
     render_html_report,
     render_overview_html_report,
@@ -169,9 +169,9 @@ def order_runs(run_a: NcduRun, run_b: NcduRun) -> tuple[NcduRun, NcduRun]:
     if run_a.timestamp is None or run_b.timestamp is None:
         missing = []
         if run_a.timestamp is None:
-            missing.append(str(run_a.root.path))
+            missing.append(str(full_path(run_a.root)))
         if run_b.timestamp is None:
-            missing.append(str(run_b.root.path))
+            missing.append(str(full_path(run_b.root)))
         raise ValueError(
             "cannot determine scan order: missing timestamp in "
             + ", ".join(missing)
@@ -207,9 +207,9 @@ def execute_detail(args: DetailArgs) -> None:
             run_b.root.total_directories,
         )
 
-        if run_a.root.path != run_b.root.path:
+        if full_path(run_a.root) != full_path(run_b.root):
             raise ValueError(
-                f"root directories do not match: {run_a.root.path} vs {run_b.root.path}."
+                f"root directories do not match: {full_path(run_a.root)} vs {full_path(run_b.root)}."
                 " Both scans must be of the same directory."
             )
 

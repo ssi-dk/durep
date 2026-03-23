@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime
-from collections.abc import Sequence
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from durep.analytics import (
@@ -16,28 +16,44 @@ from durep.analytics import (
     compute_global_metrics,
     extract_project_sample,
 )
-from durep.ncdu import NcduDir, NcduEntry, NcduFile, NcduRun
+from durep.ncdu import NcduDir, NcduFile, NcduRun, full_path
 
 
-def make_file(parent: Path, name: str, disk_size: int) -> NcduFile:
+def make_file(parent: NcduDir, name: str, disk_size: int) -> NcduFile:
     return NcduFile(
-        path=parent / name,
+        basename=name,
+        parent=parent,
         disk_size=disk_size,
     )
 
 
-def make_dir(path: Path, children: Sequence[NcduEntry], disk_size: int = 0) -> NcduDir:
-    total_bytes = disk_size + sum(c.total_bytes for c in children)
-    total_files = sum(c.total_files if isinstance(c, NcduDir) else 1 for c in children)
-    total_dirs = 1 + sum(c.total_directories for c in children if isinstance(c, NcduDir))
-    return NcduDir(
-        path=path,
+def make_dir(
+    basename: str,
+    parent: NcduDir | None,
+    children_fn: Callable[[NcduDir], Iterable[NcduDir | NcduFile]] | None = None,
+    disk_size: int = 0,
+) -> NcduDir:
+    """Create a directory node.
+
+    Pass children_fn as a callable that receives the new dir node and returns its children,
+    so that children can reference their parent. Or pass None for a leaf directory.
+    """
+    node = NcduDir(
+        basename=basename,
+        parent=parent,
         disk_size=disk_size,
-        total_bytes=total_bytes,
-        total_files=total_files,
-        total_directories=total_dirs,
-        children=list(children),
+        total_bytes=0,
+        total_files=0,
+        total_directories=0,
     )
+    if children_fn is not None:
+        node.children = list(children_fn(node))
+    node.total_bytes = disk_size + sum(c.total_bytes for c in node.children)
+    node.total_files = sum(c.total_files if isinstance(c, NcduDir) else 1 for c in node.children)
+    node.total_directories = 1 + sum(
+        c.total_directories for c in node.children if isinstance(c, NcduDir)
+    )
+    return node
 
 
 def build_bio_tree() -> NcduDir:
@@ -53,26 +69,23 @@ def build_bio_tree() -> NcduDir:
         ├── extra.fq   (400)
         └── other.bin  (100)
     """
-    root_path = Path("/data")
-    sub_path = root_path / "sub"
-
-    sub = make_dir(
-        sub_path,
-        [
-            make_file(sub_path, "extra.fq", 400),
-            make_file(sub_path, "other.bin", 100),
-        ],
-    )
-
     return make_dir(
-        root_path,
-        [
-            make_file(root_path, "reads.fastq", 1000),
-            make_file(root_path, "genome.fasta", 500),
-            make_file(root_path, "align.sam", 2000),
-            make_file(root_path, "variants.vcf", 300),
-            make_file(root_path, "report.txt", 50),
-            sub,
+        "/data",
+        None,
+        lambda root: [
+            make_file(root, "reads.fastq", 1000),
+            make_file(root, "genome.fasta", 500),
+            make_file(root, "align.sam", 2000),
+            make_file(root, "variants.vcf", 300),
+            make_file(root, "report.txt", 50),
+            make_dir(
+                "sub",
+                root,
+                lambda sub: [
+                    make_file(sub, "extra.fq", 400),
+                    make_file(sub, "other.bin", 100),
+                ],
+            ),
         ],
     )
 
@@ -84,7 +97,7 @@ def test_uncompressed_stats_accumulates_bioinformatics_formats() -> None:
     root = build_bio_tree()
     stats = compute_all_uncompressed_stats(root)
 
-    root_stats = stats[root.path]
+    root_stats = stats[full_path(root)]
     assert root_stats.fasta == 500
     assert root_stats.fastq == 1000 + 400  # reads.fastq + extra.fq
     assert root_stats.sam == 2000
@@ -92,28 +105,28 @@ def test_uncompressed_stats_accumulates_bioinformatics_formats() -> None:
 
 
 def test_uncompressed_stats_are_zero_for_non_bio_files() -> None:
-    root = make_dir(Path("/plain"), [make_file(Path("/plain"), "notes.txt", 999)])
+    root = make_dir("/plain", None, lambda r: [make_file(r, "notes.txt", 999)])
     stats = compute_all_uncompressed_stats(root)
 
-    root_stats = stats[root.path]
+    root_stats = stats[full_path(root)]
     assert root_stats == UncompressedStats(0, 0, 0, 0)
 
 
 def test_uncompressed_stats_ignore_compressed_bio_files() -> None:
-    root_path = Path("/data")
     root = make_dir(
-        root_path,
-        [
-            make_file(root_path, "reads.fastq.gz", 800),
-            make_file(root_path, "genome.fasta.gz", 400),
-            make_file(root_path, "align.sam.bz2", 600),
-            make_file(root_path, "variants.vcf.gz", 200),
-            make_file(root_path, "raw.fastq", 1000),  # this one IS uncompressed
+        "/data",
+        None,
+        lambda r: [
+            make_file(r, "reads.fastq.gz", 800),
+            make_file(r, "genome.fasta.gz", 400),
+            make_file(r, "align.sam.bz2", 600),
+            make_file(r, "variants.vcf.gz", 200),
+            make_file(r, "raw.fastq", 1000),  # this one IS uncompressed
         ],
     )
     stats = compute_all_uncompressed_stats(root)
 
-    root_stats = stats[root.path]
+    root_stats = stats[full_path(root)]
     # Only raw.fastq should count; the .gz/.bz2 files should not
     assert root_stats.fastq == 1000
     assert root_stats.fasta == 0
@@ -142,15 +155,15 @@ def test_global_metrics_match_root_node() -> None:
 
     assert metrics.total_usage_bytes == root.total_bytes
     assert metrics.total_files == root.total_files
-    assert metrics.total_uncompressed == uncompressed[root.path]
+    assert metrics.total_uncompressed == uncompressed[full_path(root)]
 
 
 # --- compute_directory_deltas ---
 
 
 def test_deltas_detect_growth() -> None:
-    prev_root = make_dir(Path("/data"), [make_file(Path("/data"), "a.txt", 100)])
-    curr_root = make_dir(Path("/data"), [make_file(Path("/data"), "a.txt", 300)])
+    prev_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 100)])
+    curr_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 300)])
 
     deltas = compute_directory_deltas(curr_root, prev_root)
     assert Path("/data") in deltas
@@ -158,8 +171,8 @@ def test_deltas_detect_growth() -> None:
 
 
 def test_deltas_detect_shrinkage() -> None:
-    prev_root = make_dir(Path("/data"), [make_file(Path("/data"), "a.txt", 500)])
-    curr_root = make_dir(Path("/data"), [make_file(Path("/data"), "a.txt", 200)])
+    prev_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 500)])
+    curr_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 200)])
 
     deltas = compute_directory_deltas(curr_root, prev_root)
     assert deltas[Path("/data")].delta_bytes == -300
@@ -167,15 +180,17 @@ def test_deltas_detect_shrinkage() -> None:
 
 def test_deltas_only_include_paths_present_in_both_snapshots() -> None:
     prev_root = make_dir(
-        Path("/data"),
-        [
-            make_dir(Path("/data/old"), [make_file(Path("/data/old"), "x.txt", 10)]),
+        "/data",
+        None,
+        lambda r: [
+            make_dir("old", r, lambda d: [make_file(d, "x.txt", 10)]),
         ],
     )
     curr_root = make_dir(
-        Path("/data"),
-        [
-            make_dir(Path("/data/new"), [make_file(Path("/data/new"), "y.txt", 20)]),
+        "/data",
+        None,
+        lambda r: [
+            make_dir("new", r, lambda d: [make_file(d, "y.txt", 20)]),
         ],
     )
 
@@ -191,11 +206,11 @@ def test_deltas_only_include_paths_present_in_both_snapshots() -> None:
 
 def build_wide_tree(n_children: int) -> NcduDir:
     """Directory with n_children files of decreasing size."""
-    root_path = Path("/wide")
-    children = [
-        make_file(root_path, f"f{i}.dat", (n_children - i) * 100) for i in range(n_children)
-    ]
-    return make_dir(root_path, children)
+    return make_dir(
+        "/wide",
+        None,
+        lambda r: [make_file(r, f"f{i}.dat", (n_children - i) * 100) for i in range(n_children)],
+    )
 
 
 def test_drilldown_prunes_to_top_n() -> None:
@@ -221,13 +236,19 @@ def test_drilldown_keeps_all_when_fewer_than_top_n() -> None:
 
 def test_drilldown_respects_max_depth() -> None:
     # 3 levels deep: /a -> /a/b -> /a/b/c -> file
-    root_path = Path("/a")
-    inner = make_dir(
-        root_path / "b" / "c",
-        [make_file(root_path / "b" / "c", "file.txt", 10)],
+    root = make_dir(
+        "/a",
+        None,
+        lambda a: [
+            make_dir(
+                "b",
+                a,
+                lambda b: [
+                    make_dir("c", b, lambda c: [make_file(c, "file.txt", 10)]),
+                ],
+            ),
+        ],
     )
-    mid = make_dir(root_path / "b", [inner])
-    root = make_dir(root_path, [mid])
     uncompressed = compute_all_uncompressed_stats(root)
 
     drilldown = build_drilldown_tree(root, uncompressed, top_n=10, max_depth=2)
@@ -250,8 +271,8 @@ def test_drilldown_other_node_bytes_equal_remainder_sum() -> None:
 
 
 def test_growth_drilldown_returns_none_when_nothing_grew() -> None:
-    prev_root = make_dir(Path("/data"), [make_file(Path("/data"), "a.txt", 500)])
-    curr_root = make_dir(Path("/data"), [make_file(Path("/data"), "a.txt", 200)])
+    prev_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 500)])
+    curr_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 200)])
     deltas = compute_directory_deltas(curr_root, prev_root)
 
     result = build_growth_drilldown(curr_root, deltas, top_n=10, max_depth=5)
@@ -259,8 +280,8 @@ def test_growth_drilldown_returns_none_when_nothing_grew() -> None:
 
 
 def test_growth_drilldown_captures_positive_deltas() -> None:
-    prev_root = make_dir(Path("/data"), [make_file(Path("/data"), "a.txt", 100)])
-    curr_root = make_dir(Path("/data"), [make_file(Path("/data"), "a.txt", 400)])
+    prev_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 100)])
+    curr_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 400)])
     deltas = compute_directory_deltas(curr_root, prev_root)
 
     result = build_growth_drilldown(curr_root, deltas, top_n=10, max_depth=5)
@@ -269,8 +290,8 @@ def test_growth_drilldown_captures_positive_deltas() -> None:
 
 
 def test_shrinkage_drilldown_captures_negative_deltas() -> None:
-    prev_root = make_dir(Path("/data"), [make_file(Path("/data"), "a.txt", 500)])
-    curr_root = make_dir(Path("/data"), [make_file(Path("/data"), "a.txt", 200)])
+    prev_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 500)])
+    curr_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 200)])
     deltas = compute_directory_deltas(curr_root, prev_root)
 
     result = build_shrinkage_drilldown(curr_root, deltas, top_n=10, max_depth=5)
@@ -279,8 +300,8 @@ def test_shrinkage_drilldown_captures_negative_deltas() -> None:
 
 
 def test_shrinkage_drilldown_returns_none_when_nothing_shrunk() -> None:
-    prev_root = make_dir(Path("/data"), [make_file(Path("/data"), "a.txt", 100)])
-    curr_root = make_dir(Path("/data"), [make_file(Path("/data"), "a.txt", 400)])
+    prev_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 100)])
+    curr_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 400)])
     deltas = compute_directory_deltas(curr_root, prev_root)
 
     result = build_shrinkage_drilldown(curr_root, deltas, top_n=10, max_depth=5)
@@ -293,7 +314,7 @@ def test_shrinkage_drilldown_returns_none_when_nothing_shrunk() -> None:
 def make_run(
     root_name: str = "/data", dsize: int = 100, timestamp_epoch: int | None = 1700000000
 ) -> NcduRun:
-    root = make_dir(Path(root_name), [make_file(Path(root_name), "a.txt", dsize)])
+    root = make_dir(root_name, None, lambda r: [make_file(r, "a.txt", dsize)])
     ts = None
     if timestamp_epoch is not None:
         ts = datetime.datetime.fromtimestamp(timestamp_epoch, tz=datetime.timezone.utc)
@@ -321,8 +342,7 @@ def test_extract_project_sample_missing_timestamp() -> None:
 
 
 def test_extract_project_sample_includes_uncompressed() -> None:
-    root_path = Path("/bio")
-    root = make_dir(root_path, [make_file(root_path, "reads.fastq", 1000)])
+    root = make_dir("/bio", None, lambda r: [make_file(r, "reads.fastq", 1000)])
     ts = datetime.datetime.fromtimestamp(1700000000, tz=datetime.timezone.utc)
     run = NcduRun(root=root, timestamp=ts)
 

@@ -13,7 +13,7 @@ from durep.analytics import (
     ProjectSample,
     ProjectTimeSeries,
 )
-from durep.ncdu import NcduDir, NcduRun
+from durep.ncdu import NcduDir, NcduRun, full_path
 
 
 def format_bytes(n: int) -> str:
@@ -48,7 +48,7 @@ def render_text_report(
     lines: list[str] = []
 
     # Header
-    lines.append(f"Disk usage report: {root.path}")
+    lines.append(f"Disk usage report: {full_path(root)}")
     lines.append(f"Current scan:  {format_timestamp(current_run.timestamp)}")
     if previous_run is not None:
         lines.append(f"Previous scan: {format_timestamp(previous_run.timestamp)}")
@@ -84,7 +84,7 @@ def render_text_report(
     lines.append(f"  {'Self':>12s}  {'Total':>12s}  Path")
     for node, direct in top_dirs:
         lines.append(
-            f"  {format_bytes(direct):>12s}  {format_bytes(node.total_bytes):>12s}  {node.path}"
+            f"  {format_bytes(direct):>12s}  {format_bytes(node.total_bytes):>12s}  {full_path(node)}"
         )
     lines.append("")
 
@@ -94,7 +94,7 @@ def render_text_report(
         lines.append("  Previous scan not available.")
     else:
         direct_deltas = _compute_direct_deltas(root, deltas)
-        net = sum(d.delta_bytes for d in deltas.values() if d.path == root.path)
+        net = sum(d.delta_bytes for d in deltas.values() if d.path == full_path(root))
         lines.append(f"  Net change: {format_bytes(net)}")
         lines.append("")
 
@@ -147,12 +147,12 @@ def _compute_direct_deltas(
     stack: list[NcduDir] = [root]
     while stack:
         node = stack.pop()
-        delta = deltas.get(node.path)
+        delta = deltas.get(full_path(node))
         if delta is not None:
             child_dir_delta = sum(
-                deltas[c.path].delta_bytes
+                deltas[full_path(c)].delta_bytes
                 for c in node.children
-                if isinstance(c, NcduDir) and c.path in deltas
+                if isinstance(c, NcduDir) and full_path(c) in deltas
             )
             direct = delta.delta_bytes - child_dir_delta
             if direct != 0:

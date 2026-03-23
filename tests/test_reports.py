@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from durep.analytics import (
     build_drilldown_tree,
     compute_all_uncompressed_stats,
@@ -21,17 +19,13 @@ def d3_leaf_sum(node: dict) -> int:
 
 
 def test_d3_leaf_sum_matches_total_bytes_with_dir_overhead() -> None:
-    root_path = Path("/data")
-    sub_path = root_path / "sub"
-
-    sub = make_dir(
-        sub_path,
-        [make_file(sub_path, "a.txt", 1000)],
-        disk_size=512,
-    )
     root = make_dir(
-        root_path,
-        [make_file(root_path, "b.txt", 2000), sub],
+        "/data",
+        None,
+        lambda r: [
+            make_file(r, "b.txt", 2000),
+            make_dir("sub", r, lambda s: [make_file(s, "a.txt", 1000)], disk_size=512),
+        ],
         disk_size=512,
     )
 
@@ -43,10 +37,10 @@ def test_d3_leaf_sum_matches_total_bytes_with_dir_overhead() -> None:
 
 
 def test_d3_leaf_sum_matches_total_bytes_without_dir_overhead() -> None:
-    root_path = Path("/data")
     root = make_dir(
-        root_path,
-        [make_file(root_path, "a.txt", 500), make_file(root_path, "b.txt", 300)],
+        "/data",
+        None,
+        lambda r: [make_file(r, "a.txt", 500), make_file(r, "b.txt", 300)],
         disk_size=0,
     )
 
@@ -58,18 +52,14 @@ def test_d3_leaf_sum_matches_total_bytes_without_dir_overhead() -> None:
 
 
 def test_d3_previous_bytes_matches_when_unchanged() -> None:
-    root_path = Path("/data")
-    sub_path = root_path / "sub"
-
     def make_tree() -> NcduDir:
-        sub = make_dir(
-            sub_path,
-            [make_file(sub_path, "a.txt", 1000)],
-            disk_size=512,
-        )
         return make_dir(
-            root_path,
-            [make_file(root_path, "b.txt", 2000), sub],
+            "/data",
+            None,
+            lambda r: [
+                make_file(r, "b.txt", 2000),
+                make_dir("sub", r, lambda s: [make_file(s, "a.txt", 1000)], disk_size=512),
+            ],
             disk_size=512,
         )
 

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from durep.ncdu import NcduDir, NcduEntry, NcduFile, NcduRun
+from durep.ncdu import NcduDir, NcduEntry, NcduFile, NcduRun, full_path
 
 EXTENSIONS = {
     "fasta": ["fna", "faa", "fasta", "fa"],
@@ -34,7 +34,8 @@ class UncompressedStats:
 
     @classmethod
     def from_file_node(cls, node: NcduFile) -> UncompressedStats:
-        ext = node.path.suffix.lstrip(".")
+        dot = node.basename.rfind(".")
+        ext = node.basename[dot + 1 :] if dot >= 0 else ""
         fmt = EXTENSION_TO_FORMAT.get(ext)
         if fmt is None:
             return UncompressedStats(0, 0, 0, 0)
@@ -108,16 +109,16 @@ def compute_all_uncompressed_stats(root: NcduDir) -> dict[Path, UncompressedStat
     while stack:
         node, visited = stack.pop()
         if isinstance(node, NcduFile):
-            result[node.path] = UncompressedStats.from_file_node(node)
+            result[full_path(node)] = UncompressedStats.from_file_node(node)
         elif visited:
             stats = UncompressedStats.zero()
             for child in node.children:
-                child_stats = result[child.path]
+                child_stats = result[full_path(child)]
                 stats.fasta += child_stats.fasta
                 stats.fastq += child_stats.fastq
                 stats.sam += child_stats.sam
                 stats.vcf += child_stats.vcf
-            result[node.path] = stats
+            result[full_path(node)] = stats
         else:
             stack.append((node, True))
             for child in node.children:
@@ -131,7 +132,7 @@ def compute_global_metrics(
     return GlobalMetrics(
         total_usage_bytes=root.total_bytes,
         total_files=root.total_files,
-        total_uncompressed=uncompressed[root.path],
+        total_uncompressed=uncompressed[full_path(root)],
     )
 
 
@@ -155,7 +156,7 @@ def _collect_all_nodes(root: NcduDir) -> dict[Path, NcduEntry]:
     stack: list[NcduEntry] = [root]
     while stack:
         node = stack.pop()
-        result[node.path] = node
+        result[full_path(node)] = node
         if isinstance(node, NcduDir):
             stack.extend(node.children)
     return result
@@ -187,7 +188,9 @@ def collapsed_previous_bytes(
     if parent_delta is None:
         return None
     prev_parent = parent_delta.previous_bytes
-    prev_distinct = sum(deltas[c.path].previous_bytes for c in distinct_nodes if c.path in deltas)
+    prev_distinct = sum(
+        deltas[full_path(c)].previous_bytes for c in distinct_nodes if full_path(c) in deltas
+    )
     return prev_parent - prev_distinct
 
 
@@ -199,13 +202,14 @@ def _build_drilldown(
     deltas: dict[Path, PathDelta] | None,
     depth: int,
 ) -> DrilldownNode:
-    node_stats = uncompressed[node.path]
-    delta = deltas.get(node.path) if deltas else None
+    node_path = full_path(node)
+    node_stats = uncompressed[node_path]
+    delta = deltas.get(node_path) if deltas else None
     prev = delta.previous_bytes if delta else None
 
     if isinstance(node, NcduFile) or depth >= max_depth:
         return DrilldownNode(
-            path=node.path,
+            path=node_path,
             node_type="file" if isinstance(node, NcduFile) else "dir",
             total_bytes=node.total_bytes,
             uncompressed=node_stats,
@@ -233,18 +237,18 @@ def _build_drilldown(
         subdirs_bytes = sum(c.total_bytes for c in dir_children)
         subdirs_stats = UncompressedStats.zero()
         for c in dir_children:
-            s = uncompressed[c.path]
+            s = uncompressed[full_path(c)]
             subdirs_stats.fasta += s.fasta
             subdirs_stats.fastq += s.fastq
             subdirs_stats.sam += s.sam
             subdirs_stats.vcf += s.vcf
         children.append(
             DrilldownNode(
-                path=node.path / f"{len(dir_children)} subdirectories",
+                path=node_path / f"{len(dir_children)} subdirectories",
                 node_type="file",
                 total_bytes=subdirs_bytes,
                 uncompressed=subdirs_stats,
-                previous_bytes=collapsed_previous_bytes(deltas, node.path, kept_files),
+                previous_bytes=collapsed_previous_bytes(deltas, node_path, kept_files),
             )
         )
 
@@ -252,19 +256,19 @@ def _build_drilldown(
             other_bytes = sum(c.total_bytes for c in remainder_files)
             other_stats = UncompressedStats.zero()
             for c in remainder_files:
-                s = uncompressed[c.path]
+                s = uncompressed[full_path(c)]
                 other_stats.fasta += s.fasta
                 other_stats.fastq += s.fastq
                 other_stats.sam += s.sam
                 other_stats.vcf += s.vcf
             children.append(
                 DrilldownNode(
-                    path=node.path / f"Other ({len(remainder_files)} files)",
+                    path=node_path / f"Other ({len(remainder_files)} files)",
                     node_type="file",
                     total_bytes=other_bytes,
                     uncompressed=other_stats,
                     previous_bytes=collapsed_previous_bytes(
-                        deltas, node.path, kept_files + dir_children
+                        deltas, node_path, kept_files + dir_children
                     ),
                 )
             )
@@ -281,23 +285,23 @@ def _build_drilldown(
             other_bytes = sum(c.total_bytes for c in remainder)
             other_stats = UncompressedStats.zero()
             for c in remainder:
-                s = uncompressed[c.path]
+                s = uncompressed[full_path(c)]
                 other_stats.fasta += s.fasta
                 other_stats.fastq += s.fastq
                 other_stats.sam += s.sam
                 other_stats.vcf += s.vcf
             children.append(
                 DrilldownNode(
-                    path=node.path / f"Other ({len(remainder)} items)",
+                    path=node_path / f"Other ({len(remainder)} items)",
                     node_type="file",
                     total_bytes=other_bytes,
                     uncompressed=other_stats,
-                    previous_bytes=collapsed_previous_bytes(deltas, node.path, kept),
+                    previous_bytes=collapsed_previous_bytes(deltas, node_path, kept),
                 )
             )
 
     return DrilldownNode(
-        path=node.path,
+        path=node_path,
         node_type="dir",
         total_bytes=node.total_bytes,
         uncompressed=node_stats,
@@ -345,7 +349,8 @@ def _build_delta_node(
     sign: int,
     depth: int,
 ) -> DrilldownNode | None:
-    delta = deltas.get(node.path)
+    node_path = full_path(node)
+    delta = deltas.get(node_path)
     if delta is None:
         return None
     # sign=1 keeps positive deltas (growth), sign=-1 keeps negative (shrinkage, flipped to positive)
@@ -355,7 +360,7 @@ def _build_delta_node(
 
     if isinstance(node, NcduFile) or depth >= max_depth:
         return DrilldownNode(
-            path=node.path,
+            path=node_path,
             node_type="file" if isinstance(node, NcduFile) else "dir",
             total_bytes=magnitude,
             uncompressed=UncompressedStats.zero(),
@@ -376,7 +381,7 @@ def _build_delta_node(
         other_bytes = sum(c.total_bytes for c in remainder)
         children.append(
             DrilldownNode(
-                path=node.path / f"Other ({len(remainder)} items)",
+                path=node_path / f"Other ({len(remainder)} items)",
                 node_type="file",
                 total_bytes=other_bytes,
                 uncompressed=UncompressedStats.zero(),
@@ -384,7 +389,7 @@ def _build_delta_node(
         )
 
     return DrilldownNode(
-        path=node.path,
+        path=node_path,
         node_type="dir",
         total_bytes=magnitude,
         uncompressed=UncompressedStats.zero(),
@@ -432,17 +437,18 @@ class ProjectTimeSeries:
 
 
 def extract_project_sample(run: NcduRun) -> ProjectSample:
+    root_path = full_path(run.root)
     if run.timestamp is None:
-        raise ValueError(f"scan for {run.root.path} has no timestamp; overview requires timestamps")
+        raise ValueError(f"scan for {root_path} has no timestamp; overview requires timestamps")
     uncompressed = compute_all_uncompressed_stats(run.root)
     return ProjectSample(
-        project=run.root.path.name,
+        project=root_path.name,
         timestamp=run.timestamp,
         date=run.timestamp.date(),
         total_bytes=run.root.total_bytes,
         total_files=run.root.total_files,
         total_directories=run.root.total_directories,
-        uncompressed=uncompressed[run.root.path],
+        uncompressed=uncompressed[root_path],
     )
 
 
