@@ -36,7 +36,6 @@ def test_parse_ncdu_json_file_builds_normalized_tree_with_aggregates(tmp_path: P
 
     assert root.path == Path("/")
     assert root.node_type == "dir"
-    assert root.apparent_size == 100
     assert root.disk_size == 120
     assert root.total_bytes == 143
     assert root.total_files == 3
@@ -45,7 +44,6 @@ def test_parse_ncdu_json_file_builds_normalized_tree_with_aggregates(tmp_path: P
     file_a = root.children[0]
     assert file_a.path == Path("/file_a.bin")
     assert file_a.node_type == "file"
-    assert file_a.file_count == 1
     assert file_a.disk_size == 12
     assert file_a.total_files == 1
     assert file_a.total_directories == 0
@@ -68,7 +66,6 @@ def test_parse_ncdu_json_file_builds_normalized_tree_with_aggregates(tmp_path: P
     deep = dir2.children[0]
     assert deep.path == Path("/dir1/dir2/deep.bin")
     assert deep.disk_size == 0
-    assert deep.apparent_size == 1
 
 
 def test_parse_ncdu_json_file_extracts_timestamp(tmp_path: Path) -> None:

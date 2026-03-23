@@ -4,12 +4,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, NamedTuple, Literal
-
-
-class ParsedSizes(NamedTuple):
-    apparent_size: int
-    disk_size: int
+from typing import Any, Literal
 
 
 @dataclass(slots=True)
@@ -17,9 +12,7 @@ class NcduNode:
     # Absolute path: root must be absolute, children are resolved from their parent
     path: Path
     node_type: Literal["dir", "file"]
-    apparent_size: int
     disk_size: int
-    file_count: int
     total_bytes: int
     total_files: int
     total_directories: int
@@ -78,7 +71,7 @@ def parse_dir_tree(tree: list[Any], parent_path: Path | None) -> NcduNode:
         raise ValueError("Directory tree metadata must be a JSON object")
 
     node_path = resolve_child_path(parent_path=parent_path, name=get_required_name(metadata))
-    sizes = parse_sizes(metadata)
+    disk_size = parse_disk_size(metadata)
 
     # Subsequent entries in a dir list is its direct children
     children: list[NcduNode] = []
@@ -91,15 +84,13 @@ def parse_dir_tree(tree: list[Any], parent_path: Path | None) -> NcduNode:
 
     # Since these are computed recursively already, this pass here only need to
     # touch the top level subdirectories, and so will be fast
-    total_bytes = sizes.disk_size + sum(child.total_bytes for child in children)
+    total_bytes = disk_size + sum(child.total_bytes for child in children)
     total_files = sum(child.total_files for child in children)
     total_directories = 1 + sum(child.total_directories for child in children)
     return NcduNode(
         path=node_path,
         node_type="dir",
-        apparent_size=sizes.apparent_size,
-        disk_size=sizes.disk_size,
-        file_count=0,
+        disk_size=disk_size,
         total_bytes=total_bytes,
         total_files=total_files,
         total_directories=total_directories,
@@ -110,24 +101,19 @@ def parse_dir_tree(tree: list[Any], parent_path: Path | None) -> NcduNode:
 def parse_file_entry(entry: dict[str, Any], parent_path: Path) -> NcduNode:
     name = get_required_name(entry)
     node_path = resolve_child_path(parent_path=parent_path, name=name)
-    sizes = parse_sizes(entry)
+    disk_size = parse_disk_size(entry)
     return NcduNode(
         path=node_path,
         node_type="file",
-        apparent_size=sizes.apparent_size,
-        disk_size=sizes.disk_size,
-        file_count=1,
-        total_bytes=sizes.disk_size,
+        disk_size=disk_size,
+        total_bytes=disk_size,
         total_files=1,
         total_directories=0,
-        children=[],
     )
 
 
-def parse_sizes(entry: dict[str, Any]) -> ParsedSizes:
-    apparent_size = parse_non_negative_int(entry.get("asize", 0), field_name="asize")
-    disk_size = parse_non_negative_int(entry.get("dsize", 0), field_name="dsize")
-    return ParsedSizes(apparent_size=apparent_size, disk_size=disk_size)
+def parse_disk_size(entry: dict[str, Any]) -> int:
+    return parse_non_negative_int(entry.get("dsize", 0), field_name="dsize")
 
 
 def get_required_name(entry: dict[str, Any]) -> str:

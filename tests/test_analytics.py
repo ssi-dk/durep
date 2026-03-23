@@ -22,9 +22,7 @@ def make_file(parent: Path, name: str, disk_size: int) -> NcduNode:
     return NcduNode(
         path=parent / name,
         node_type="file",
-        apparent_size=disk_size,
         disk_size=disk_size,
-        file_count=1,
         total_bytes=disk_size,
         total_files=1,
         total_directories=0,
@@ -38,9 +36,7 @@ def make_dir(path: Path, children: list[NcduNode], disk_size: int = 0) -> NcduNo
     return NcduNode(
         path=path,
         node_type="dir",
-        apparent_size=disk_size,
         disk_size=disk_size,
-        file_count=0,
         total_bytes=total_bytes,
         total_files=total_files,
         total_directories=total_dirs,
