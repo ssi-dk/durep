@@ -32,7 +32,7 @@ def test_d3_leaf_sum_matches_total_bytes_with_dir_overhead() -> None:
         disk_size=512,
     )
 
-    drilldown = build_drilldown_tree(root, top_n=25, max_depth=100)
+    drilldown = build_drilldown_tree(root, top_n=25)
     d3 = drilldown_to_d3(drilldown)
 
     assert d3_leaf_sum(d3) == root.total_bytes
@@ -46,7 +46,7 @@ def test_d3_leaf_sum_matches_total_bytes_without_dir_overhead() -> None:
         disk_size=0,
     )
 
-    drilldown = build_drilldown_tree(root, top_n=25, max_depth=100)
+    drilldown = build_drilldown_tree(root, top_n=25)
     d3 = drilldown_to_d3(drilldown)
 
     assert d3_leaf_sum(d3) == root.total_bytes
@@ -67,7 +67,7 @@ def test_d3_previous_bytes_matches_when_unchanged() -> None:
     current = make_tree()
     previous = make_tree()
     deltas = compute_directory_deltas(current, previous)
-    drilldown = build_drilldown_tree(current, top_n=25, max_depth=100, deltas=deltas)
+    drilldown = build_drilldown_tree(current, top_n=25, deltas=deltas)
     d3 = drilldown_to_d3(drilldown)
 
     def check_all_deltas_zero(node: dict) -> None:

@@ -212,7 +212,7 @@ def build_wide_tree(n_children: int) -> NcduDir:
 
 def test_drilldown_prunes_to_top_n() -> None:
     root = build_wide_tree(10)
-    drilldown = build_drilldown_tree(root, top_n=3, max_depth=5)
+    drilldown = build_drilldown_tree(root, top_n=3)
 
     # 3 kept + 1 "Other" node
     assert len(drilldown.children) == 4
@@ -223,36 +223,15 @@ def test_drilldown_prunes_to_top_n() -> None:
 
 def test_drilldown_keeps_all_when_fewer_than_top_n() -> None:
     root = build_wide_tree(3)
-    drilldown = build_drilldown_tree(root, top_n=10, max_depth=5)
+    drilldown = build_drilldown_tree(root, top_n=10)
 
     assert len(drilldown.children) == 3
     assert all("Other" not in str(c.path) for c in drilldown.children)
 
 
-def test_drilldown_respects_max_depth() -> None:
-    # 3 levels deep: /a -> /a/b -> /a/b/c -> file
-    root = make_dir(
-        "/a",
-        None,
-        lambda a: [
-            make_dir(
-                "b",
-                a,
-                lambda b: [
-                    make_dir("c", b, lambda c: [make_file(c, "file.txt", 10)]),
-                ],
-            ),
-        ],
-    )
-    drilldown = build_drilldown_tree(root, top_n=10, max_depth=2)
-
-    # depth 0 = /a, depth 1 = /a/b, depth 2 = /a/b/c (hit limit, becomes leaf)
-    assert drilldown.children[0].children[0].children == []
-
-
 def test_drilldown_other_node_bytes_equal_remainder_sum() -> None:
     root = build_wide_tree(6)
-    drilldown = build_drilldown_tree(root, top_n=2, max_depth=5)
+    drilldown = build_drilldown_tree(root, top_n=2)
 
     other = drilldown.children[-1]
     # Kept: f0 (600), f1 (500). Remainder: f2 (400) + f3 (300) + f4 (200) + f5 (100) = 1000
@@ -267,7 +246,7 @@ def test_growth_drilldown_returns_none_when_nothing_grew() -> None:
     curr_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 200)])
     deltas = compute_directory_deltas(curr_root, prev_root)
 
-    result = build_growth_drilldown(curr_root, deltas, top_n=10, max_depth=5)
+    result = build_growth_drilldown(curr_root, deltas, top_n=10)
     assert result is None
 
 
@@ -276,7 +255,7 @@ def test_growth_drilldown_captures_positive_deltas() -> None:
     curr_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 400)])
     deltas = compute_directory_deltas(curr_root, prev_root)
 
-    result = build_growth_drilldown(curr_root, deltas, top_n=10, max_depth=5)
+    result = build_growth_drilldown(curr_root, deltas, top_n=10)
     assert result is not None
     assert result.total_bytes == 300
 
@@ -286,7 +265,7 @@ def test_shrinkage_drilldown_captures_negative_deltas() -> None:
     curr_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 200)])
     deltas = compute_directory_deltas(curr_root, prev_root)
 
-    result = build_shrinkage_drilldown(curr_root, deltas, top_n=10, max_depth=5)
+    result = build_shrinkage_drilldown(curr_root, deltas, top_n=10)
     assert result is not None
     assert result.total_bytes == 300
 
@@ -296,7 +275,7 @@ def test_shrinkage_drilldown_returns_none_when_nothing_shrunk() -> None:
     curr_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 400)])
     deltas = compute_directory_deltas(curr_root, prev_root)
 
-    result = build_shrinkage_drilldown(curr_root, deltas, top_n=10, max_depth=5)
+    result = build_shrinkage_drilldown(curr_root, deltas, top_n=10)
     assert result is None
 
 

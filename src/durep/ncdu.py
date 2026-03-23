@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import heapq
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -140,8 +141,10 @@ class DirAggregate:
     uncompressed: UncompressedStats
 
 
-def parse_ncdu_json_file(path: Path, top_n: int | None = None) -> NcduRun:
-    return parse_ncdu_file(path, parse_tree_to_run, top_n)
+def parse_ncdu_json_file(
+    path: Path, top_n: int | None = None, display_nodes: int | None = None
+) -> NcduRun:
+    return parse_ncdu_file(path, parse_tree_to_run, top_n, display_nodes)
 
 
 def parse_ncdu_project_sample(path: Path) -> "ProjectSample":
@@ -168,10 +171,14 @@ def parse_ncdu_file(path: Path, parse_body: Callable[..., Any], *parse_args: Any
             raise ValueError(error_prefix + str(exc)) from exc
 
 
-def parse_tree_to_run(parser: Iterator[Event], timestamp: datetime, top_n: int | None) -> NcduRun:
+def parse_tree_to_run(
+    parser: Iterator[Event], timestamp: datetime, top_n: int | None, display_nodes: int | None
+) -> NcduRun:
     root = parse_tree_streaming(parser, top_n=top_n)
     if root.parent is None and not Path(root.basename).is_absolute():
         raise ValueError(f"Root node path must be absolute, got: {root.basename}")
+    if display_nodes is not None:
+        apply_node_budget(root, display_nodes)
     return NcduRun(root=root, timestamp=timestamp)
 
 
@@ -270,6 +277,62 @@ def collapse_children(directory: NcduDir, top_n: int) -> None:
         uncompressed=agg,
     )
     directory.children = kept + [collapsed]
+
+
+def apply_node_budget(root: NcduDir, budget: int) -> None:
+    """Collapse directories to keep total display nodes within *budget*.
+
+    Uses greedy size-priority expansion: starting from the root, expand
+    the largest directories first until the budget is exhausted.  Directories
+    that are not expanded are replaced with :class:`CollapsedNode` leaves.
+    """
+    # Phase 1 — decide which directories to expand using a max-heap.
+    expanded: set[int] = {id(root)}
+    node_count = 1 + len(root.children)
+
+    heap: list[tuple[int, int, NcduDir]] = []
+    counter = 0
+    for child in root.children:
+        if isinstance(child, NcduDir):
+            heapq.heappush(heap, (-child.total_bytes, counter, child))
+            counter += 1
+
+    while heap:
+        _neg_bytes, _tie, d = heapq.heappop(heap)
+        cost = len(d.children)
+        if node_count + cost <= budget:
+            node_count += cost
+            expanded.add(id(d))
+            for child in d.children:
+                if isinstance(child, NcduDir):
+                    heapq.heappush(heap, (-child.total_bytes, counter, child))
+                    counter += 1
+
+    # Phase 2 — collapse every directory that was *not* expanded.
+    _collapse_unexpanded(root, expanded)
+
+
+def _collapse_unexpanded(node: NcduDir, expanded: set[int]) -> None:
+    new_children: list[NcduEntry] = []
+    for child in node.children:
+        if isinstance(child, NcduDir):
+            if id(child) in expanded:
+                _collapse_unexpanded(child, expanded)
+                new_children.append(child)
+            else:
+                new_children.append(
+                    CollapsedNode(
+                        basename=child.basename,
+                        parent=node,
+                        count=child.total_files + child.total_directories,
+                        disk_size=child.total_bytes,
+                        total_bytes=child.total_bytes,
+                        uncompressed=child.uncompressed,
+                    )
+                )
+        else:
+            new_children.append(child)
+    node.children = new_children
 
 
 def parse_tree_streaming(parser: Iterator[Event], top_n: int | None = None) -> NcduDir:

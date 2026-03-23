@@ -13,6 +13,8 @@ from durep.ncdu import (
     CollapsedNode,
     NcduDir,
     NcduFile,
+    UncompressedStats,
+    apply_node_budget,
     full_path,
     parse_ncdu_json_file,
     parse_ncdu_project_sample,
@@ -344,3 +346,119 @@ def test_parse_with_top_n_preserves_uncompressed_stats(tmp_path: Path) -> None:
     assert root.uncompressed.fastq == 500
     assert root.uncompressed.fasta == 100
     assert root.uncompressed.sam == 50
+
+
+# --- apply_node_budget ---
+
+
+def make_dir_node(
+    basename: str,
+    parent: NcduDir | None,
+    children: list[NcduDir | NcduFile | CollapsedNode] | None = None,
+    disk_size: int = 0,
+) -> NcduDir:
+    node = NcduDir(
+        basename=basename,
+        parent=parent,
+        disk_size=disk_size,
+        total_bytes=disk_size,
+        total_files=0,
+        total_directories=1,
+        uncompressed=UncompressedStats.zero(),
+        children=[],
+    )
+    if children is not None:
+        for c in children:
+            c.parent = node  # type: ignore[assignment]
+        node.children = children
+        node.total_bytes = disk_size + sum(c.total_bytes for c in children)
+        node.total_files = sum(c.total_files if isinstance(c, NcduDir) else 1 for c in children)
+        node.total_directories = 1 + sum(
+            c.total_directories for c in children if isinstance(c, NcduDir)
+        )
+    return node
+
+
+def make_file_node(basename: str, disk_size: int) -> NcduFile:
+    # parent is set later by make_dir_node
+    return NcduFile(
+        basename=basename,
+        parent=None,  # type: ignore[arg-type]
+        disk_size=disk_size,
+        uncompressed=UncompressedStats.zero(),
+    )
+
+
+def test_apply_node_budget_no_op_when_within_budget() -> None:
+    root = make_dir_node(
+        "/data",
+        None,
+        [make_file_node("a.txt", 100), make_file_node("b.txt", 200)],
+    )
+
+    apply_node_budget(root, budget=100)
+
+    assert len(root.children) == 2
+    assert all(isinstance(c, NcduFile) for c in root.children)
+
+
+def test_apply_node_budget_collapses_dirs_when_over_budget() -> None:
+    sub1 = make_dir_node("sub1", None, [make_file_node(f"f{i}.txt", 10) for i in range(20)])
+    sub2 = make_dir_node("sub2", None, [make_file_node(f"f{i}.txt", 10) for i in range(20)])
+    root = make_dir_node("/data", None, [sub1, sub2])
+
+    # Root + 2 children = 3 nodes. Expanding sub1 costs 20, expanding sub2 costs 20.
+    # Budget of 10 means neither sub gets expanded.
+    apply_node_budget(root, budget=10)
+
+    assert len(root.children) == 2
+    assert all(isinstance(c, CollapsedNode) for c in root.children)
+    assert root.children[0].total_bytes + root.children[1].total_bytes == root.total_bytes
+
+
+def test_apply_node_budget_expands_largest_first() -> None:
+    big = make_dir_node("big", None, [make_file_node("x.txt", 500)])
+    small = make_dir_node("small", None, [make_file_node("y.txt", 10)])
+    root = make_dir_node("/data", None, [big, small])
+
+    # Root + 2 children = 3 nodes. Expanding big costs 1, expanding small costs 1.
+    # Budget of 4 allows expanding one dir.
+    apply_node_budget(root, budget=4)
+
+    # big should be expanded (it's larger), small collapsed
+    big_child = next(c for c in root.children if c.basename == "big")
+    small_child = next(c for c in root.children if c.basename == "small")
+    assert isinstance(big_child, NcduDir)
+    assert isinstance(small_child, CollapsedNode)
+
+
+def test_apply_node_budget_preserves_total_bytes() -> None:
+    sub = make_dir_node(
+        "sub", None, [make_file_node(f"f{i}.txt", (i + 1) * 100) for i in range(10)]
+    )
+    root = make_dir_node("/data", None, [sub, make_file_node("top.bin", 999)])
+
+    original_total = root.total_bytes
+    apply_node_budget(root, budget=5)
+
+    # Total bytes are preserved in collapsed nodes
+    actual_total = sum(c.total_bytes for c in root.children) + root.disk_size
+    assert actual_total == original_total
+
+
+def test_apply_node_budget_skips_expensive_dir_expands_cheap_one() -> None:
+    # expensive has 100 children, cheap has 2
+    expensive = make_dir_node(
+        "expensive", None, [make_file_node(f"f{i}.txt", 10) for i in range(100)]
+    )
+    cheap = make_dir_node("cheap", None, [make_file_node("a.txt", 5), make_file_node("b.txt", 5)])
+    root = make_dir_node("/data", None, [expensive, cheap])
+
+    # Root + 2 children = 3. Budget = 6.
+    # Expanding expensive costs 100 (too many). Expanding cheap costs 2. 3+2=5 <= 6.
+    apply_node_budget(root, budget=6)
+
+    expensive_child = next(c for c in root.children if c.basename == "expensive")
+    cheap_child = next(c for c in root.children if c.basename == "cheap")
+    assert isinstance(expensive_child, CollapsedNode)
+    assert isinstance(cheap_child, NcduDir)

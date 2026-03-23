@@ -32,7 +32,7 @@ class DetailArgs:
     scans: list[Path]
     out_dir: Path
     top_n: int
-    max_depth: int
+    display_nodes: int
 
     @classmethod
     def from_namespace(cls, namespace: argparse.Namespace) -> DetailArgs:
@@ -40,7 +40,7 @@ class DetailArgs:
             scans=[Path(p) for p in namespace.scan],
             out_dir=Path(namespace.out_dir),
             top_n=namespace.top_n,
-            max_depth=namespace.max_depth,
+            display_nodes=namespace.display_nodes,
         )
 
     def validate(self) -> None:
@@ -110,10 +110,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum number of children to keep per expanded node (default: 25).",
     )
     detail.add_argument(
-        "--max-depth",
+        "--display-nodes",
         type=positive_int,
-        default=100,
-        help="Maximum expansion depth used for drilldown datasets (default: 100).",
+        default=5000,
+        help="Maximum number of nodes in the display tree (default: 5000)."
+        " Directories are expanded largest-first until this budget is reached.",
     )
 
     # overview subcommand
@@ -215,7 +216,7 @@ def execute_detail(args: DetailArgs) -> None:
     log.info("Output directory: %s", out_dir)
 
     log.info("Parsing scan: %s", args.scans[0])
-    run_a = parse_ncdu_json_file(args.scans[0], top_n=args.top_n)
+    run_a = parse_ncdu_json_file(args.scans[0], top_n=args.top_n, display_nodes=args.display_nodes)
     log.debug(
         "Scan: %d files, %d directories",
         run_a.root.total_files,
@@ -225,7 +226,9 @@ def execute_detail(args: DetailArgs) -> None:
     previous_run: NcduRun | None = None
     if len(args.scans) == 2:
         log.info("Parsing scan: %s", args.scans[1])
-        run_b = parse_ncdu_json_file(args.scans[1], top_n=args.top_n)
+        run_b = parse_ncdu_json_file(
+            args.scans[1], top_n=args.top_n, display_nodes=args.display_nodes
+        )
         log.debug(
             "Scan: %d files, %d directories",
             run_b.root.total_files,
@@ -255,15 +258,13 @@ def execute_detail(args: DetailArgs) -> None:
     text_path.write_text(text, encoding="utf-8")
     log.info("Wrote text report: %s", text_path)
 
-    log.debug("Building drilldown tree (top_n=%d, max_depth=%d)", args.top_n, args.max_depth)
-    drilldown = build_drilldown_tree(current_run.root, args.top_n, args.max_depth, deltas)
+    log.debug("Building drilldown tree (top_n=%d)", args.top_n)
+    drilldown = build_drilldown_tree(current_run.root, args.top_n, deltas)
 
     growth_drilldown = None
     if deltas is not None:
         log.debug("Building growth drilldown")
-        growth_drilldown = build_growth_drilldown(
-            current_run.root, deltas, args.top_n, args.max_depth
-        )
+        growth_drilldown = build_growth_drilldown(current_run.root, deltas, args.top_n)
 
     html = render_html_report(current_run, previous_run, drilldown, metrics, growth_drilldown, text)
     html_path = out_dir / "overall.html"
