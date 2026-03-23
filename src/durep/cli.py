@@ -288,7 +288,7 @@ def execute_overview(args: OverviewArgs) -> None:
     text_path.write_text(text, encoding="utf-8")
     log.info("Wrote text report: %s", text_path)
 
-    html = render_overview_html_report(series, text)
+    html = render_overview_html_report(series, text, samples)
     html_path = out_dir / "overview.html"
     html_path.write_text(html, encoding="utf-8")
     log.info("Wrote HTML report: %s", html_path)

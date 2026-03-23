@@ -34,6 +34,18 @@ def format_timestamp(ts: datetime) -> str:
     return ts.strftime("%Y-%m-%d %H:%M UTC")
 
 
+def format_overview_growth_pct(earliest: int, latest: int) -> str:
+    growth = latest - earliest
+    if earliest > 0:
+        pct = (growth / earliest) * 100
+        if pct > 1000:
+            return "> 1000%"
+        return f"{pct:+.1f}%"
+    if latest > 0:
+        return "new"
+    return "0.0%"
+
+
 def render_text_report(
     current_run: NcduRun,
     previous_run: NcduRun | None,
@@ -505,6 +517,20 @@ def render_html_report(
     .card {{ background: #f5f5f5; border-radius: 8px; padding: 1em 1.5em; min-width: 150px; }}
     .card .label {{ font-size: 0.85em; color: #666; }}
     .card .value {{ font-size: 1.4em; font-weight: bold; }}
+    .overview-layout {{ display: flex; gap: 1.5em; align-items: flex-start; flex-wrap: wrap; }}
+    .overview-plot {{ flex: 1 1 900px; min-width: 0; }}
+    .overview-legend {{ flex: 0 0 240px; max-height: 400px; overflow-y: auto; padding-right: 0.25em; }}
+    .overview-legend h3 {{ margin: 0 0 0.75em; font-size: 1em; }}
+    .legend-item {{
+      display: flex; align-items: center; gap: 0.6em; width: 100%;
+      padding: 0.3em 0.4em; border: 0; background: transparent; text-align: left;
+      cursor: pointer; border-radius: 6px; font: inherit; color: inherit;
+    }}
+    .legend-item:hover {{ background: #f0f0f0; }}
+    .legend-item.is-hidden {{ color: #999; text-decoration: line-through; }}
+    .legend-swatch {{ width: 14px; height: 14px; border-radius: 2px; flex: 0 0 14px; }}
+    .legend-item.is-hidden .legend-swatch {{ opacity: 0.2; }}
+    .legend-label {{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
     h1 {{ margin-bottom: 0.3em; }}
     h2 {{ margin-top: 2em; }}
     pre {{ background: #f5f5f5; padding: 1.5em; border-radius: 8px; overflow-x: auto;
@@ -575,12 +601,7 @@ def render_overview_text_report(
                 break
 
         growth = latest - earliest
-        if earliest > 0:
-            pct = f"{(growth / earliest) * 100:+.1f}%"
-        elif latest > 0:
-            pct = "new"
-        else:
-            pct = "0.0%"
+        pct = format_overview_growth_pct(earliest, latest)
 
         compressible = ts.uncompressed_values[-1].total_size if ts.uncompressed_values else 0
 
@@ -606,17 +627,12 @@ def render_overview_text_report(
 
 
 STACKED_AREA_JS = """\
-function renderStackedArea(containerId, seriesData, formatBytes) {
+function renderStackedArea(containerId, legendId, seriesData, formatBytes) {
   const container = d3.select("#" + containerId);
+  const legendContainer = d3.select("#" + legendId);
   const margin = {top: 20, right: 200, bottom: 40, left: 80};
   const width = 900 - margin.left - margin.right;
   const height = 400 - margin.top - margin.bottom;
-
-  const svg = container.append("svg")
-    .attr("viewBox", [0, 0, 900, 400])
-    .style("max-width", "900px")
-    .append("g")
-    .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
 
   // Parse dates
   const parseDate = d3.timeParse("%Y-%m-%d");
@@ -625,19 +641,26 @@ function renderStackedArea(containerId, seriesData, formatBytes) {
   const values = seriesData.values;
   const measured = seriesData.measured;
 
-  // Sort projects by absolute growth (smallest first = bottom of stack)
+  // Sort projects by latest size (largest first = bottom of stack)
   const projectGrowth = projects.map((p, j) => {
     const vals = values[j];
-    const first = vals.find(v => v > 0) || 0;
     const last = vals[vals.length - 1];
-    return {project: p, absGrowth: Math.abs(last - first)};
+    return {project: p, latestSize: last};
   });
-  projectGrowth.sort((a, b) => a.absGrowth - b.absGrowth);
+  projectGrowth.sort((a, b) => b.latestSize - a.latestSize);
   const sortedProjects = projectGrowth.map(pg => pg.project);
+
+  const svg = container.append("svg")
+    .attr("viewBox", [0, 0, 900, 400])
+    .style("max-width", "900px")
+    .append("g")
+    .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
 
   const color = d3.scaleOrdinal()
     .domain(sortedProjects)
     .range(d3.schemeTableau10.concat(d3.schemePaired));
+
+  const projectIndex = new Map(projects.map((p, i) => [p, i]));
 
   const x = d3.scaleTime()
     .domain(d3.extent(dates))
@@ -676,6 +699,8 @@ function renderStackedArea(containerId, seriesData, formatBytes) {
     .call(d3.axisBottom(x).ticks(tickInterval).tickFormat(tickFmt));
 
   const yAxis = svg.append("g");
+  const yAxisRight = svg.append("g")
+    .attr("transform", "translate(" + width + ",0)");
 
   // Hidden project tracking and redraw
   const hidden = new Set();
@@ -699,6 +724,9 @@ function renderStackedArea(containerId, seriesData, formatBytes) {
     const yMax = d3.max(stackedData, layer => d3.max(layer, d => d[1])) || 0;
     y.domain([0, yMax]).nice();
     yAxis.transition().duration(300).call(d3.axisLeft(y).ticks(6).tickFormat(d => formatBytes(d)));
+    yAxisRight.transition().duration(300).call(
+      d3.axisRight(y).ticks(6).tickFormat(d => formatBytes(d))
+    );
 
     // Areas
     const paths = areaGroup.selectAll("path").data(stackedData, d => d.key);
@@ -707,6 +735,12 @@ function renderStackedArea(containerId, seriesData, formatBytes) {
       .attr("fill", d => color(d.key))
       .attr("fill-opacity", 0.8)
       .merge(paths)
+      .on("mousemove", function(event, d) {
+        showProjectTooltip(event, d.key);
+      })
+      .on("mouseleave", function() {
+        hideTooltip();
+      })
       .transition().duration(300)
       .attr("d", area);
 
@@ -734,31 +768,6 @@ function renderStackedArea(containerId, seriesData, formatBytes) {
 
   redraw();
 
-  // Legend (clickable)
-  const legend = svg.append("g")
-    .attr("transform", "translate(" + (width + 10) + ",0)");
-
-  sortedProjects.slice().reverse().forEach((p, i) => {
-    const g = legend.append("g")
-      .attr("transform", "translate(0," + (i * 20) + ")")
-      .style("cursor", "pointer");
-    const swatch = g.append("rect").attr("width", 14).attr("height", 14).attr("fill", color(p));
-    const label = p.length > 20 ? "..." + p.slice(-(20 - 3)) : p;
-    const text = g.append("text").attr("x", 18).attr("y", 11).style("font-size", "11px").text(label);
-    g.on("click", function() {
-      if (hidden.has(p)) {
-        hidden.delete(p);
-        swatch.attr("fill-opacity", 1);
-        text.style("text-decoration", null).style("fill", null);
-      } else {
-        hidden.add(p);
-        swatch.attr("fill-opacity", 0.2);
-        text.style("text-decoration", "line-through").style("fill", "#999");
-      }
-      redraw();
-    });
-  });
-
   // Tooltip
   const tooltip = container.append("div")
     .style("position", "absolute")
@@ -770,34 +779,73 @@ function renderStackedArea(containerId, seriesData, formatBytes) {
     .style("pointer-events", "none")
     .style("display", "none");
 
-  const bisect = d3.bisector(d => d).left;
+  function projectHistoryHtml(project) {
+    const pi = projectIndex.get(project);
+    const projectValues = values[pi];
+    const projectMeasured = measured[pi];
+    const rows = [];
+    for (let i = 0; i < dates.length; i++) {
+      if (projectMeasured[i]) {
+        rows.push(
+          "<div>" +
+          d3.timeFormat("%Y-%m-%d")(dates[i]) +
+          ": " +
+          formatBytes(projectValues[i]) +
+          "</div>"
+        );
+      }
+    }
+    return (
+      "<strong>" + project + "</strong><br>" +
+      "<span style='color:" + color(project) + "'>\u25a0</span> Observed sizes<br>" +
+      rows.join("")
+    );
+  }
 
-  svg.append("rect")
-    .attr("width", width)
-    .attr("height", height)
-    .attr("fill", "transparent")
-    .on("mousemove", function(event) {
-      const [mx] = d3.pointer(event);
-      const dateAtMouse = x.invert(mx);
-      const idx = Math.min(bisect(dates, dateAtMouse), dates.length - 1);
-      const d = dates[idx];
-      let html = "<strong>" + d3.timeFormat("%Y-%m-%d")(d) + "</strong><br>";
-      sortedProjects.slice().reverse().forEach((p, j) => {
-        if (hidden.has(p)) return;
-        const pi = sortedProjects.indexOf(p);
-        const val = values[pi][idx];
-        if (val > 0) {
-          html += "<span style='color:" + color(p) + "'>\u25a0</span> " + p + ": " + formatBytes(val) + "<br>";
-        }
-      });
-      tooltip.style("display", "block").html(html);
-      const rect = container.node().getBoundingClientRect();
-      tooltip.style("left", (event.clientX - rect.left + 15) + "px")
-             .style("top", (event.clientY - rect.top - 10) + "px");
-    })
-    .on("mouseleave", function() {
-      tooltip.style("display", "none");
+  function positionTooltip(event) {
+    const rect = container.node().getBoundingClientRect();
+    tooltip.style("left", (event.clientX - rect.left + 15) + "px")
+           .style("top", (event.clientY - rect.top - 10) + "px");
+  }
+
+  function showProjectTooltip(event, project) {
+    tooltip.style("display", "block").html(projectHistoryHtml(project));
+    positionTooltip(event);
+  }
+
+  function hideTooltip() {
+    tooltip.style("display", "none");
+  }
+
+  const legendItems = legendContainer.selectAll(".legend-item")
+    .data(sortedProjects)
+    .join("button")
+    .attr("type", "button")
+    .attr("class", "legend-item")
+    .on("click", function(event, project) {
+      event.preventDefault();
+      if (hidden.has(project)) {
+        hidden.delete(project);
+      } else {
+        hidden.add(project);
+      }
+      syncLegend();
+      redraw();
     });
+
+  legendItems.append("span")
+    .attr("class", "legend-swatch")
+    .style("background-color", project => color(project));
+
+  legendItems.append("span")
+    .attr("class", "legend-label")
+    .text(project => project);
+
+  function syncLegend() {
+    legendItems.classed("is-hidden", project => hidden.has(project));
+  }
+
+  syncLegend();
 }
 """
 
@@ -817,6 +865,7 @@ def downsample_indices(series: list[ProjectTimeSeries]) -> list[int]:
 def render_overview_html_report(
     series: list[ProjectTimeSeries],
     text_report: str,
+    samples: list[ProjectSample],
 ) -> str:
     if not series:
         dates: list[str] = []
@@ -832,6 +881,7 @@ def render_overview_html_report(
 
     # Summary card values
     total_projects = len(series)
+    total_files = sum(s.total_files for s in samples)
     total_latest = sum(s.bytes_values[-1] for s in series if s.bytes_values)
     total_earliest = 0
     for s in series:
@@ -867,6 +917,20 @@ def render_overview_html_report(
     .card {{ background: #f5f5f5; border-radius: 8px; padding: 1em 1.5em; min-width: 150px; }}
     .card .label {{ font-size: 0.85em; color: #666; }}
     .card .value {{ font-size: 1.4em; font-weight: bold; }}
+    .overview-layout {{ display: flex; gap: 1.5em; align-items: flex-start; flex-wrap: wrap; }}
+    .overview-plot {{ flex: 1 1 900px; min-width: 0; }}
+    .overview-legend {{ flex: 0 0 240px; max-height: 400px; overflow-y: auto; padding-right: 0.25em; }}
+    .overview-legend h3 {{ margin: 0 0 0.75em; font-size: 1em; }}
+    .legend-item {{
+      display: flex; align-items: center; gap: 0.6em; width: 100%;
+      padding: 0.3em 0.4em; border: 0; background: transparent; text-align: left;
+      cursor: pointer; border-radius: 6px; font: inherit; color: inherit;
+    }}
+    .legend-item:hover {{ background: #f0f0f0; }}
+    .legend-item.is-hidden {{ color: #999; text-decoration: line-through; }}
+    .legend-swatch {{ width: 14px; height: 14px; border-radius: 2px; flex: 0 0 14px; }}
+    .legend-item.is-hidden .legend-swatch {{ opacity: 0.2; }}
+    .legend-label {{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
     h1 {{ margin-bottom: 0.3em; }}
     h2 {{ margin-top: 2em; }}
     pre {{ background: #f5f5f5; padding: 1.5em; border-radius: 8px; overflow-x: auto;
@@ -884,6 +948,10 @@ def render_overview_html_report(
       <div class="value">{total_projects}</div>
     </div>
     <div class="card">
+      <div class="label">Total files</div>
+      <div class="value">{total_files}</div>
+    </div>
+    <div class="card">
       <div class="label">Total size (latest)</div>
       <div class="value">{html.escape(format_bytes(total_latest))}</div>
     </div>
@@ -898,7 +966,15 @@ def render_overview_html_report(
   </div>
 
   <h2>Size over time</h2>
-  <div id="overview-chart"></div>
+  <div class="overview-layout">
+    <div class="overview-plot">
+      <div id="overview-chart"></div>
+    </div>
+    <aside class="overview-legend">
+      <h3>Projects</h3>
+      <div id="overview-legend"></div>
+    </aside>
+  </div>
 
   <h2>Text report</h2>
   <pre>{html.escape(text_report)}</pre>
@@ -913,7 +989,7 @@ function formatBytes(n) {{
   return n.toFixed(1) + " " + units[u];
 }}
   const chartData = {chart_data};
-  renderStackedArea('overview-chart', chartData, formatBytes);
+  renderStackedArea('overview-chart', 'overview-legend', chartData, formatBytes);
   </script>
 </body>
 </html>
