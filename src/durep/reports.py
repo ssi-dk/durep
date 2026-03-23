@@ -290,6 +290,14 @@ function renderSunburst(containerId, data, formatBytes) {
     .style("margin", "0 0 0.5em 0");
   deltaLine.text(formatDelta(root));
 
+  const resetBtn = container.append("div")
+    .style("text-align", "center")
+    .style("margin", "0 0 0.5em 0")
+    .append("button")
+    .text("Reset to top level")
+    .style("display", "none")
+    .style("cursor", "pointer");
+
   const svg = container.append("svg")
     .attr("viewBox", [-radius, -radius, width, width])
     .style("max-width", width + "px")
@@ -367,15 +375,12 @@ function renderSunburst(containerId, data, formatBytes) {
     return d.ancestors().map(a => a.data.name).reverse().join("/");
   }
 
-  // Click to zoom
-  paths.on("click", function(event, p) {
-    if (focus === p) { p = root; }
-    // Don't zoom into leaf nodes (no children to show); zoom to parent instead
-    if (p !== root && (!p.children || p.children.length === 0)) { p = p.parent || root; }
+  function zoomTo(p) {
     focus = p;
 
     breadcrumb.text(fullPath(p) + " (" + formatBytes(p.value) + ")");
     deltaLine.text(formatDelta(p));
+    resetBtn.style("display", p === root ? "none" : "inline-block");
 
     // Remap y positions: show at most maxVisibleRings relative to the
     // clicked node, with the center circle shrunk to 2/3.
@@ -418,7 +423,17 @@ function renderSunburst(containerId, data, formatBytes) {
     // Fade labels out during transition, then rebuild after
     labelGroup.selectAll("text").transition(t).attr("fill-opacity", 0);
     t.end().then(() => updateLabels());
+  }
+
+  // Click to zoom into a node; clicking the focused node goes up one level
+  paths.on("click", function(event, p) {
+    if (focus === p) { p = p.parent || root; }
+    // Don't zoom into leaf nodes (no children to show); zoom to parent instead
+    else if (!p.children || p.children.length === 0) { p = p.parent || root; }
+    zoomTo(p);
   });
+
+  resetBtn.on("click", function() { zoomTo(root); });
 }
 
 function formatBytes(n) {

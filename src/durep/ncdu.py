@@ -14,6 +14,7 @@ class ParsedSizes(NamedTuple):
 
 @dataclass(slots=True)
 class NcduNode:
+    # Absolute path: root must be absolute, children are resolved from their parent
     path: Path
     node_type: Literal["dir", "file"]
     apparent_size: int

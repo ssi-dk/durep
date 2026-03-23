@@ -173,7 +173,6 @@ def build_drilldown_tree(
 def collapsed_previous_bytes(
     deltas: dict[Path, PathDelta] | None,
     parent_path: Path,
-    collapsed_nodes: list[NcduNode],
     distinct_nodes: list[NcduNode],
 ) -> int | None:
     """Compute previous_bytes for a synthetic collapsed node.
@@ -244,9 +243,7 @@ def _build_drilldown(
                 node_type="file",
                 total_bytes=subdirs_bytes,
                 uncompressed=subdirs_stats,
-                previous_bytes=collapsed_previous_bytes(
-                    deltas, node.path, dir_children, kept_files
-                ),
+                previous_bytes=collapsed_previous_bytes(deltas, node.path, kept_files),
             )
         )
 
@@ -266,7 +263,7 @@ def _build_drilldown(
                     total_bytes=other_bytes,
                     uncompressed=other_stats,
                     previous_bytes=collapsed_previous_bytes(
-                        deltas, node.path, remainder_files, kept_files + dir_children
+                        deltas, node.path, kept_files + dir_children
                     ),
                 )
             )
@@ -294,7 +291,7 @@ def _build_drilldown(
                     node_type="file",
                     total_bytes=other_bytes,
                     uncompressed=other_stats,
-                    previous_bytes=collapsed_previous_bytes(deltas, node.path, remainder, kept),
+                    previous_bytes=collapsed_previous_bytes(deltas, node.path, kept),
                 )
             )
 
