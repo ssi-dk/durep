@@ -11,12 +11,11 @@ from durep.analytics import (
     build_drilldown_tree,
     build_growth_drilldown,
     build_overview_series,
-    compute_all_uncompressed_stats,
     compute_directory_deltas,
     compute_global_metrics,
     extract_project_sample,
 )
-from durep.ncdu import NcduRun, full_path, parse_ncdu_json_file
+from durep.ncdu import NcduRun, parse_ncdu_json_file, path_str
 from durep.reports import (
     render_html_report,
     render_overview_html_report,
@@ -169,9 +168,9 @@ def order_runs(run_a: NcduRun, run_b: NcduRun) -> tuple[NcduRun, NcduRun]:
     if run_a.timestamp is None or run_b.timestamp is None:
         missing = []
         if run_a.timestamp is None:
-            missing.append(str(full_path(run_a.root)))
+            missing.append(str(path_str(run_a.root)))
         if run_b.timestamp is None:
-            missing.append(str(full_path(run_b.root)))
+            missing.append(str(path_str(run_b.root)))
         raise ValueError(
             "cannot determine scan order: missing timestamp in "
             + ", ".join(missing)
@@ -207,9 +206,9 @@ def execute_detail(args: DetailArgs) -> None:
             run_b.root.total_directories,
         )
 
-        if full_path(run_a.root) != full_path(run_b.root):
+        if path_str(run_a.root) != path_str(run_b.root):
             raise ValueError(
-                f"root directories do not match: {full_path(run_a.root)} vs {full_path(run_b.root)}."
+                f"root directories do not match: {path_str(run_a.root)} vs {path_str(run_b.root)}."
                 " Both scans must be of the same directory."
             )
 
@@ -217,9 +216,7 @@ def execute_detail(args: DetailArgs) -> None:
     else:
         current_run = run_a
 
-    log.debug("Computing uncompressed stats")
-    uncompressed = compute_all_uncompressed_stats(current_run.root)
-    metrics = compute_global_metrics(current_run.root, uncompressed)
+    metrics = compute_global_metrics(current_run.root)
 
     deltas = None
     if previous_run is not None:
@@ -233,9 +230,7 @@ def execute_detail(args: DetailArgs) -> None:
     log.info("Wrote text report: %s", text_path)
 
     log.debug("Building drilldown tree (top_n=%d, max_depth=%d)", args.top_n, args.max_depth)
-    drilldown = build_drilldown_tree(
-        current_run.root, uncompressed, args.top_n, args.max_depth, deltas
-    )
+    drilldown = build_drilldown_tree(current_run.root, args.top_n, args.max_depth, deltas)
 
     growth_drilldown = None
     if deltas is not None:

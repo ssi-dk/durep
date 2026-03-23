@@ -3,7 +3,6 @@ from __future__ import annotations
 import html
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from durep.analytics import (
@@ -13,7 +12,7 @@ from durep.analytics import (
     ProjectSample,
     ProjectTimeSeries,
 )
-from durep.ncdu import NcduDir, NcduRun, full_path
+from durep.ncdu import NcduDir, NcduRun, path_str
 
 
 def format_bytes(n: int) -> str:
@@ -41,14 +40,14 @@ def render_text_report(
     current_run: NcduRun,
     previous_run: NcduRun | None,
     metrics: GlobalMetrics,
-    deltas: dict[Path, PathDelta] | None,
+    deltas: dict[str, PathDelta] | None,
     top_n: int,
 ) -> str:
     root = current_run.root
     lines: list[str] = []
 
     # Header
-    lines.append(f"Disk usage report: {full_path(root)}")
+    lines.append(f"Disk usage report: {path_str(root)}")
     lines.append(f"Current scan:  {format_timestamp(current_run.timestamp)}")
     if previous_run is not None:
         lines.append(f"Previous scan: {format_timestamp(previous_run.timestamp)}")
@@ -84,7 +83,7 @@ def render_text_report(
     lines.append(f"  {'Self':>12s}  {'Total':>12s}  Path")
     for node, direct in top_dirs:
         lines.append(
-            f"  {format_bytes(direct):>12s}  {format_bytes(node.total_bytes):>12s}  {full_path(node)}"
+            f"  {format_bytes(direct):>12s}  {format_bytes(node.total_bytes):>12s}  {path_str(node)}"
         )
     lines.append("")
 
@@ -94,7 +93,7 @@ def render_text_report(
         lines.append("  Previous scan not available.")
     else:
         direct_deltas = _compute_direct_deltas(root, deltas)
-        net = sum(d.delta_bytes for d in deltas.values() if d.path == full_path(root))
+        net = sum(d.delta_bytes for d in deltas.values() if d.path == path_str(root))
         lines.append(f"  Net change: {format_bytes(net)}")
         lines.append("")
 
@@ -136,7 +135,7 @@ def render_text_report(
 
 
 def _compute_direct_deltas(
-    root: NcduDir, deltas: dict[Path, PathDelta]
+    root: NcduDir, deltas: dict[str, PathDelta]
 ) -> list[tuple[PathDelta, int]]:
     """Compute the direct (self) delta for each directory.
 
@@ -147,12 +146,12 @@ def _compute_direct_deltas(
     stack: list[NcduDir] = [root]
     while stack:
         node = stack.pop()
-        delta = deltas.get(full_path(node))
+        delta = deltas.get(path_str(node))
         if delta is not None:
             child_dir_delta = sum(
-                deltas[full_path(c)].delta_bytes
+                deltas[path_str(c)].delta_bytes
                 for c in node.children
-                if isinstance(c, NcduDir) and full_path(c) in deltas
+                if isinstance(c, NcduDir) and path_str(c) in deltas
             )
             direct = delta.delta_bytes - child_dir_delta
             if direct != 0:

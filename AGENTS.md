@@ -34,6 +34,7 @@ Open the generated `overall.html` in a browser and verify:
 ## Coding style
 * Never add an AI agent as a co-author on commits
 * Do not prepend single underscores to names; the only API is the CLI, so all functions are private
+* Use type hints in every signature to be able to lean on static checks.
 
 ## After making changes:
 * Check for type errors using `.venv/bin/pyright 2>&1`. Fix errors IF you judge that the errors are not false positives,

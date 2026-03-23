@@ -6,59 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from durep.ncdu import NcduDir, NcduEntry, NcduFile, NcduRun, full_path
-
-EXTENSIONS = {
-    "fasta": ["fna", "faa", "fasta", "fa"],
-    "fastq": ["fastq", "fq"],
-    "sam": ["sam"],
-    "vcf": ["vcf"],
-}
-
-# Reverse lookup: extension string -> format name
-EXTENSION_TO_FORMAT: dict[str, str] = {}
-for fmt, exts in EXTENSIONS.items():
-    for ext in exts:
-        EXTENSION_TO_FORMAT[ext] = fmt
-
-
-# Users might want information about data that is taking up more space
-# that necessary. These formats are common in bioinformatics, large, and
-# typically compressed, so seeing them uncompressed is a sign of waste.
-@dataclass(slots=True)
-class UncompressedStats:
-    fasta: int
-    fastq: int
-    vcf: int
-    sam: int
-
-    @classmethod
-    def from_file_node(cls, node: NcduFile) -> UncompressedStats:
-        dot = node.basename.rfind(".")
-        ext = node.basename[dot + 1 :] if dot >= 0 else ""
-        fmt = EXTENSION_TO_FORMAT.get(ext)
-        if fmt is None:
-            return UncompressedStats(0, 0, 0, 0)
-
-        size = node.disk_size
-        if fmt == "fasta":
-            return UncompressedStats(size, 0, 0, 0)
-        elif fmt == "fastq":
-            return UncompressedStats(0, size, 0, 0)
-        elif fmt == "vcf":
-            return UncompressedStats(0, 0, size, 0)
-        elif fmt == "sam":
-            return UncompressedStats(0, 0, 0, size)
-        else:
-            assert False  # unreachable
-
-    @property
-    def total_size(self) -> int:
-        return self.fasta + self.fastq + self.vcf + self.sam
-
-    @classmethod
-    def zero(cls) -> UncompressedStats:
-        return cls(0, 0, 0, 0)
+from durep.ncdu import NcduDir, NcduEntry, NcduFile, NcduRun, UncompressedStats, full_path, path_str
 
 
 # Metrics reported for one project or user
@@ -91,7 +39,7 @@ class DrilldownNode:
 # whether data under that path grew or shrunk
 @dataclass(slots=True)
 class PathDelta:
-    path: Path
+    path: str
     current_bytes: int
     previous_bytes: int
 
@@ -100,46 +48,18 @@ class PathDelta:
         return self.current_bytes - self.previous_bytes
 
 
-def compute_all_uncompressed_stats(root: NcduDir) -> dict[Path, UncompressedStats]:
-    """Single post-order pass: each node is visited exactly once."""
-    result: dict[Path, UncompressedStats] = {}
-    # Post-order: push nodes, then process after all children are done.
-    # We use (node, visited) pairs; first visit pushes children, second collects.
-    stack: list[tuple[NcduEntry, bool]] = [(root, False)]
-    while stack:
-        node, visited = stack.pop()
-        if isinstance(node, NcduFile):
-            result[full_path(node)] = UncompressedStats.from_file_node(node)
-        elif visited:
-            stats = UncompressedStats.zero()
-            for child in node.children:
-                child_stats = result[full_path(child)]
-                stats.fasta += child_stats.fasta
-                stats.fastq += child_stats.fastq
-                stats.sam += child_stats.sam
-                stats.vcf += child_stats.vcf
-            result[full_path(node)] = stats
-        else:
-            stack.append((node, True))
-            for child in node.children:
-                stack.append((child, False))
-    return result
-
-
-def compute_global_metrics(
-    root: NcduDir, uncompressed: dict[Path, UncompressedStats]
-) -> GlobalMetrics:
+def compute_global_metrics(root: NcduDir) -> GlobalMetrics:
     return GlobalMetrics(
         total_usage_bytes=root.total_bytes,
         total_files=root.total_files,
-        total_uncompressed=uncompressed[full_path(root)],
+        total_uncompressed=root.uncompressed,
     )
 
 
-def compute_directory_deltas(current: NcduDir, previous: NcduDir) -> dict[Path, PathDelta]:
+def compute_directory_deltas(current: NcduDir, previous: NcduDir) -> dict[str, PathDelta]:
     current_nodes = _collect_all_nodes(current)
     previous_nodes = _collect_all_nodes(previous)
-    deltas: dict[Path, PathDelta] = {}
+    deltas: dict[str, PathDelta] = {}
     for path, cur_node in current_nodes.items():
         prev_node = previous_nodes.get(path)
         if prev_node is not None:
@@ -151,12 +71,12 @@ def compute_directory_deltas(current: NcduDir, previous: NcduDir) -> dict[Path, 
     return deltas
 
 
-def _collect_all_nodes(root: NcduDir) -> dict[Path, NcduEntry]:
-    result: dict[Path, NcduEntry] = {}
+def _collect_all_nodes(root: NcduDir) -> dict[str, NcduEntry]:
+    result: dict[str, NcduEntry] = {}
     stack: list[NcduEntry] = [root]
     while stack:
         node = stack.pop()
-        result[full_path(node)] = node
+        result[path_str(node)] = node
         if isinstance(node, NcduDir):
             stack.extend(node.children)
     return result
@@ -164,17 +84,16 @@ def _collect_all_nodes(root: NcduDir) -> dict[Path, NcduEntry]:
 
 def build_drilldown_tree(
     root: NcduDir,
-    uncompressed: dict[Path, UncompressedStats],
     top_n: int,
     max_depth: int,
-    deltas: dict[Path, PathDelta] | None = None,
+    deltas: dict[str, PathDelta] | None = None,
 ) -> DrilldownNode:
-    return _build_drilldown(root, uncompressed, top_n, max_depth, deltas, depth=0)
+    return _build_drilldown(root, top_n, max_depth, deltas, depth=0)
 
 
 def collapsed_previous_bytes(
-    deltas: dict[Path, PathDelta] | None,
-    parent_path: Path,
+    deltas: dict[str, PathDelta] | None,
+    parent_key: str,
     distinct_nodes: Sequence[NcduEntry],
 ) -> int | None:
     """Compute previous_bytes for a synthetic collapsed node.
@@ -184,27 +103,26 @@ def collapsed_previous_bytes(
     """
     if not deltas:
         return None
-    parent_delta = deltas.get(parent_path)
+    parent_delta = deltas.get(parent_key)
     if parent_delta is None:
         return None
     prev_parent = parent_delta.previous_bytes
     prev_distinct = sum(
-        deltas[full_path(c)].previous_bytes for c in distinct_nodes if full_path(c) in deltas
+        deltas[path_str(c)].previous_bytes for c in distinct_nodes if path_str(c) in deltas
     )
     return prev_parent - prev_distinct
 
 
 def _build_drilldown(
     node: NcduEntry,
-    uncompressed: dict[Path, UncompressedStats],
     top_n: int,
     max_depth: int,
-    deltas: dict[Path, PathDelta] | None,
+    deltas: dict[str, PathDelta] | None,
     depth: int,
 ) -> DrilldownNode:
     node_path = full_path(node)
-    node_stats = uncompressed[node_path]
-    delta = deltas.get(node_path) if deltas else None
+    node_key = str(node_path)
+    delta = deltas.get(node_key) if deltas else None
     prev = delta.previous_bytes if delta else None
 
     if isinstance(node, NcduFile) or depth >= max_depth:
@@ -212,7 +130,7 @@ def _build_drilldown(
             path=node_path,
             node_type="file" if isinstance(node, NcduFile) else "dir",
             total_bytes=node.total_bytes,
-            uncompressed=node_stats,
+            uncompressed=node.uncompressed,
             previous_bytes=prev,
         )
 
@@ -228,27 +146,23 @@ def _build_drilldown(
         kept_files = sorted_files[:top_n]
         remainder_files = sorted_files[top_n:]
 
-        children = [
-            _build_drilldown(c, uncompressed, top_n, max_depth, deltas, depth + 1)
-            for c in kept_files
-        ]
+        children = [_build_drilldown(c, top_n, max_depth, deltas, depth + 1) for c in kept_files]
 
         # Aggregate all subdirectories into one synthetic leaf
         subdirs_bytes = sum(c.total_bytes for c in dir_children)
         subdirs_stats = UncompressedStats.zero()
         for c in dir_children:
-            s = uncompressed[full_path(c)]
-            subdirs_stats.fasta += s.fasta
-            subdirs_stats.fastq += s.fastq
-            subdirs_stats.sam += s.sam
-            subdirs_stats.vcf += s.vcf
+            subdirs_stats.fasta += c.uncompressed.fasta
+            subdirs_stats.fastq += c.uncompressed.fastq
+            subdirs_stats.sam += c.uncompressed.sam
+            subdirs_stats.vcf += c.uncompressed.vcf
         children.append(
             DrilldownNode(
                 path=node_path / f"{len(dir_children)} subdirectories",
                 node_type="file",
                 total_bytes=subdirs_bytes,
                 uncompressed=subdirs_stats,
-                previous_bytes=collapsed_previous_bytes(deltas, node_path, kept_files),
+                previous_bytes=collapsed_previous_bytes(deltas, node_key, kept_files),
             )
         )
 
@@ -256,11 +170,10 @@ def _build_drilldown(
             other_bytes = sum(c.total_bytes for c in remainder_files)
             other_stats = UncompressedStats.zero()
             for c in remainder_files:
-                s = uncompressed[full_path(c)]
-                other_stats.fasta += s.fasta
-                other_stats.fastq += s.fastq
-                other_stats.sam += s.sam
-                other_stats.vcf += s.vcf
+                other_stats.fasta += c.uncompressed.fasta
+                other_stats.fastq += c.uncompressed.fastq
+                other_stats.sam += c.uncompressed.sam
+                other_stats.vcf += c.uncompressed.vcf
             children.append(
                 DrilldownNode(
                     path=node_path / f"Other ({len(remainder_files)} files)",
@@ -268,7 +181,7 @@ def _build_drilldown(
                     total_bytes=other_bytes,
                     uncompressed=other_stats,
                     previous_bytes=collapsed_previous_bytes(
-                        deltas, node_path, kept_files + dir_children
+                        deltas, node_key, kept_files + dir_children
                     ),
                 )
             )
@@ -277,26 +190,23 @@ def _build_drilldown(
         kept = sorted_children[:top_n]
         remainder = sorted_children[top_n:]
 
-        children = [
-            _build_drilldown(c, uncompressed, top_n, max_depth, deltas, depth + 1) for c in kept
-        ]
+        children = [_build_drilldown(c, top_n, max_depth, deltas, depth + 1) for c in kept]
 
         if remainder:
             other_bytes = sum(c.total_bytes for c in remainder)
             other_stats = UncompressedStats.zero()
             for c in remainder:
-                s = uncompressed[full_path(c)]
-                other_stats.fasta += s.fasta
-                other_stats.fastq += s.fastq
-                other_stats.sam += s.sam
-                other_stats.vcf += s.vcf
+                other_stats.fasta += c.uncompressed.fasta
+                other_stats.fastq += c.uncompressed.fastq
+                other_stats.sam += c.uncompressed.sam
+                other_stats.vcf += c.uncompressed.vcf
             children.append(
                 DrilldownNode(
                     path=node_path / f"Other ({len(remainder)} items)",
                     node_type="file",
                     total_bytes=other_bytes,
                     uncompressed=other_stats,
-                    previous_bytes=collapsed_previous_bytes(deltas, node_path, kept),
+                    previous_bytes=collapsed_previous_bytes(deltas, node_key, kept),
                 )
             )
 
@@ -304,7 +214,7 @@ def _build_drilldown(
         path=node_path,
         node_type="dir",
         total_bytes=node.total_bytes,
-        uncompressed=node_stats,
+        uncompressed=node.uncompressed,
         children=children,
         previous_bytes=prev,
     )
@@ -312,7 +222,7 @@ def _build_drilldown(
 
 def build_growth_drilldown(
     current: NcduDir,
-    deltas: dict[Path, PathDelta],
+    deltas: dict[str, PathDelta],
     top_n: int,
     max_depth: int,
 ) -> DrilldownNode | None:
@@ -321,7 +231,7 @@ def build_growth_drilldown(
 
 def build_shrinkage_drilldown(
     current: NcduDir,
-    deltas: dict[Path, PathDelta],
+    deltas: dict[str, PathDelta],
     top_n: int,
     max_depth: int,
 ) -> DrilldownNode | None:
@@ -330,7 +240,7 @@ def build_shrinkage_drilldown(
 
 def _build_delta_drilldown(
     current: NcduDir,
-    deltas: dict[Path, PathDelta],
+    deltas: dict[str, PathDelta],
     top_n: int,
     max_depth: int,
     sign: int,
@@ -343,14 +253,14 @@ def _build_delta_drilldown(
 
 def _build_delta_node(
     node: NcduEntry,
-    deltas: dict[Path, PathDelta],
+    deltas: dict[str, PathDelta],
     top_n: int,
     max_depth: int,
     sign: int,
     depth: int,
 ) -> DrilldownNode | None:
     node_path = full_path(node)
-    delta = deltas.get(node_path)
+    delta = deltas.get(str(node_path))
     if delta is None:
         return None
     # sign=1 keeps positive deltas (growth), sign=-1 keeps negative (shrinkage, flipped to positive)
@@ -437,18 +347,19 @@ class ProjectTimeSeries:
 
 
 def extract_project_sample(run: NcduRun) -> ProjectSample:
-    root_path = full_path(run.root)
+    root_str = path_str(run.root)
     if run.timestamp is None:
-        raise ValueError(f"scan for {root_path} has no timestamp; overview requires timestamps")
-    uncompressed = compute_all_uncompressed_stats(run.root)
+        raise ValueError(f"scan for {root_str} has no timestamp; overview requires timestamps")
+    # Extract last path component as project name
+    name = root_str.rsplit("/", 1)[-1] or root_str
     return ProjectSample(
-        project=root_path.name,
+        project=name,
         timestamp=run.timestamp,
         date=run.timestamp.date(),
         total_bytes=run.root.total_bytes,
         total_files=run.root.total_files,
         total_directories=run.root.total_directories,
-        uncompressed=uncompressed[root_path],
+        uncompressed=run.root.uncompressed,
     )
 
 

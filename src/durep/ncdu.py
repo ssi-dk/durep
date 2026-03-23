@@ -6,12 +6,60 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+EXTENSIONS = {
+    "fasta": ["fna", "faa", "fasta", "fa"],
+    "fastq": ["fastq", "fq"],
+    "sam": ["sam"],
+    "vcf": ["vcf"],
+}
+
+# Reverse lookup: extension string -> format name
+EXTENSION_TO_FORMAT: dict[str, str] = {}
+for _fmt, _exts in EXTENSIONS.items():
+    for _ext in _exts:
+        EXTENSION_TO_FORMAT[_ext] = _fmt
+
+
+@dataclass(slots=True)
+class UncompressedStats:
+    fasta: int
+    fastq: int
+    vcf: int
+    sam: int
+
+    @property
+    def total_size(self) -> int:
+        return self.fasta + self.fastq + self.vcf + self.sam
+
+    @classmethod
+    def zero(cls) -> UncompressedStats:
+        return cls(0, 0, 0, 0)
+
+    @classmethod
+    def from_file_node(cls, basename: str, disk_size: int) -> UncompressedStats:
+        dot = basename.rfind(".")
+        ext = basename[dot + 1 :] if dot >= 0 else ""
+        fmt = EXTENSION_TO_FORMAT.get(ext)
+        if fmt is None:
+            return UncompressedStats(0, 0, 0, 0)
+        if fmt == "fasta":
+            return UncompressedStats(disk_size, 0, 0, 0)
+        elif fmt == "fastq":
+            return UncompressedStats(0, disk_size, 0, 0)
+        elif fmt == "vcf":
+            return UncompressedStats(0, 0, disk_size, 0)
+        elif fmt == "sam":
+            return UncompressedStats(0, 0, 0, disk_size)
+        else:
+            assert False  # unreachable
+
 
 @dataclass(slots=True)
 class NcduFile:
     basename: str
     parent: NcduDir
     disk_size: int
+    uncompressed: UncompressedStats
 
     @property
     def total_bytes(self) -> int:
@@ -26,13 +74,14 @@ class NcduDir:
     total_bytes: int
     total_files: int
     total_directories: int
+    uncompressed: UncompressedStats
     children: list[NcduEntry] = field(default_factory=list)
 
 
 NcduEntry = NcduDir | NcduFile
 
 
-def full_path(node: NcduEntry) -> Path:
+def path_str(node: NcduEntry) -> str:
     parts: list[str] = []
     current: NcduEntry = node
     while True:
@@ -44,7 +93,17 @@ def full_path(node: NcduEntry) -> Path:
         else:
             break
     parts.reverse()
-    return Path(*parts) if len(parts) > 1 else Path(parts[0])
+    if len(parts) == 1:
+        return parts[0]
+    root = parts[0]
+    rest = "/".join(parts[1:])
+    if root.endswith("/"):
+        return root + rest
+    return root + "/" + rest
+
+
+def full_path(node: NcduEntry) -> Path:
+    return Path(path_str(node))
 
 
 @dataclass(slots=True)
@@ -114,6 +173,7 @@ def parse_dir_tree(tree: list[Any], parent: NcduDir | None) -> NcduDir:
         total_bytes=0,
         total_files=0,
         total_directories=0,
+        uncompressed=UncompressedStats.zero(),
     )
 
     # Subsequent entries in a dir list is its direct children
@@ -131,6 +191,13 @@ def parse_dir_tree(tree: list[Any], parent: NcduDir | None) -> NcduDir:
     node.total_directories = 1 + sum(
         c.total_directories for c in node.children if isinstance(c, NcduDir)
     )
+    agg = UncompressedStats.zero()
+    for child in node.children:
+        agg.fasta += child.uncompressed.fasta
+        agg.fastq += child.uncompressed.fastq
+        agg.vcf += child.uncompressed.vcf
+        agg.sam += child.uncompressed.sam
+    node.uncompressed = agg
     return node
 
 
@@ -141,6 +208,7 @@ def parse_file_entry(entry: dict[str, Any], parent: NcduDir) -> NcduFile:
         basename=basename,
         parent=parent,
         disk_size=disk_size,
+        uncompressed=UncompressedStats.from_file_node(basename, disk_size),
     )
 
 

@@ -2,21 +2,17 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Callable, Iterable
-from pathlib import Path
-
 from durep.analytics import (
     ProjectSample,
-    UncompressedStats,
     build_drilldown_tree,
     build_growth_drilldown,
     build_overview_series,
     build_shrinkage_drilldown,
-    compute_all_uncompressed_stats,
     compute_directory_deltas,
     compute_global_metrics,
     extract_project_sample,
 )
-from durep.ncdu import NcduDir, NcduFile, NcduRun, full_path
+from durep.ncdu import NcduDir, NcduFile, NcduRun, UncompressedStats
 
 
 def make_file(parent: NcduDir, name: str, disk_size: int) -> NcduFile:
@@ -24,6 +20,7 @@ def make_file(parent: NcduDir, name: str, disk_size: int) -> NcduFile:
         basename=name,
         parent=parent,
         disk_size=disk_size,
+        uncompressed=UncompressedStats.from_file_node(name, disk_size),
     )
 
 
@@ -45,6 +42,7 @@ def make_dir(
         total_bytes=0,
         total_files=0,
         total_directories=0,
+        uncompressed=UncompressedStats.zero(),
     )
     if children_fn is not None:
         node.children = list(children_fn(node))
@@ -53,6 +51,13 @@ def make_dir(
     node.total_directories = 1 + sum(
         c.total_directories for c in node.children if isinstance(c, NcduDir)
     )
+    agg = UncompressedStats.zero()
+    for child in node.children:
+        agg.fasta += child.uncompressed.fasta
+        agg.fastq += child.uncompressed.fastq
+        agg.vcf += child.uncompressed.vcf
+        agg.sam += child.uncompressed.sam
+    node.uncompressed = agg
     return node
 
 
@@ -90,26 +95,22 @@ def build_bio_tree() -> NcduDir:
     )
 
 
-# --- compute_all_uncompressed_stats ---
+# --- uncompressed stats (computed during tree construction) ---
 
 
 def test_uncompressed_stats_accumulates_bioinformatics_formats() -> None:
     root = build_bio_tree()
-    stats = compute_all_uncompressed_stats(root)
 
-    root_stats = stats[full_path(root)]
-    assert root_stats.fasta == 500
-    assert root_stats.fastq == 1000 + 400  # reads.fastq + extra.fq
-    assert root_stats.sam == 2000
-    assert root_stats.vcf == 300
+    assert root.uncompressed.fasta == 500
+    assert root.uncompressed.fastq == 1000 + 400  # reads.fastq + extra.fq
+    assert root.uncompressed.sam == 2000
+    assert root.uncompressed.vcf == 300
 
 
 def test_uncompressed_stats_are_zero_for_non_bio_files() -> None:
     root = make_dir("/plain", None, lambda r: [make_file(r, "notes.txt", 999)])
-    stats = compute_all_uncompressed_stats(root)
 
-    root_stats = stats[full_path(root)]
-    assert root_stats == UncompressedStats(0, 0, 0, 0)
+    assert root.uncompressed == UncompressedStats(0, 0, 0, 0)
 
 
 def test_uncompressed_stats_ignore_compressed_bio_files() -> None:
@@ -124,25 +125,22 @@ def test_uncompressed_stats_ignore_compressed_bio_files() -> None:
             make_file(r, "raw.fastq", 1000),  # this one IS uncompressed
         ],
     )
-    stats = compute_all_uncompressed_stats(root)
 
-    root_stats = stats[full_path(root)]
     # Only raw.fastq should count; the .gz/.bz2 files should not
-    assert root_stats.fastq == 1000
-    assert root_stats.fasta == 0
-    assert root_stats.sam == 0
-    assert root_stats.vcf == 0
+    assert root.uncompressed.fastq == 1000
+    assert root.uncompressed.fasta == 0
+    assert root.uncompressed.sam == 0
+    assert root.uncompressed.vcf == 0
 
 
 def test_uncompressed_stats_per_subdirectory() -> None:
     root = build_bio_tree()
-    stats = compute_all_uncompressed_stats(root)
 
-    sub_stats = stats[Path("/data/sub")]
-    assert sub_stats.fastq == 400
-    assert sub_stats.fasta == 0
-    assert sub_stats.sam == 0
-    assert sub_stats.vcf == 0
+    sub = next(c for c in root.children if isinstance(c, NcduDir))
+    assert sub.uncompressed.fastq == 400
+    assert sub.uncompressed.fasta == 0
+    assert sub.uncompressed.sam == 0
+    assert sub.uncompressed.vcf == 0
 
 
 # --- compute_global_metrics ---
@@ -150,12 +148,11 @@ def test_uncompressed_stats_per_subdirectory() -> None:
 
 def test_global_metrics_match_root_node() -> None:
     root = build_bio_tree()
-    uncompressed = compute_all_uncompressed_stats(root)
-    metrics = compute_global_metrics(root, uncompressed)
+    metrics = compute_global_metrics(root)
 
     assert metrics.total_usage_bytes == root.total_bytes
     assert metrics.total_files == root.total_files
-    assert metrics.total_uncompressed == uncompressed[full_path(root)]
+    assert metrics.total_uncompressed == root.uncompressed
 
 
 # --- compute_directory_deltas ---
@@ -166,8 +163,8 @@ def test_deltas_detect_growth() -> None:
     curr_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 300)])
 
     deltas = compute_directory_deltas(curr_root, prev_root)
-    assert Path("/data") in deltas
-    assert deltas[Path("/data")].delta_bytes == 200
+    assert "/data" in deltas
+    assert deltas["/data"].delta_bytes == 200
 
 
 def test_deltas_detect_shrinkage() -> None:
@@ -175,7 +172,7 @@ def test_deltas_detect_shrinkage() -> None:
     curr_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 200)])
 
     deltas = compute_directory_deltas(curr_root, prev_root)
-    assert deltas[Path("/data")].delta_bytes == -300
+    assert deltas["/data"].delta_bytes == -300
 
 
 def test_deltas_only_include_paths_present_in_both_snapshots() -> None:
@@ -196,9 +193,9 @@ def test_deltas_only_include_paths_present_in_both_snapshots() -> None:
 
     deltas = compute_directory_deltas(curr_root, prev_root)
     # Root is in both, but /data/old and /data/new are not shared
-    assert Path("/data") in deltas
-    assert Path("/data/old") not in deltas
-    assert Path("/data/new") not in deltas
+    assert "/data" in deltas
+    assert "/data/old" not in deltas
+    assert "/data/new" not in deltas
 
 
 # --- build_drilldown_tree ---
@@ -215,8 +212,7 @@ def build_wide_tree(n_children: int) -> NcduDir:
 
 def test_drilldown_prunes_to_top_n() -> None:
     root = build_wide_tree(10)
-    uncompressed = compute_all_uncompressed_stats(root)
-    drilldown = build_drilldown_tree(root, uncompressed, top_n=3, max_depth=5)
+    drilldown = build_drilldown_tree(root, top_n=3, max_depth=5)
 
     # 3 kept + 1 "Other" node
     assert len(drilldown.children) == 4
@@ -227,8 +223,7 @@ def test_drilldown_prunes_to_top_n() -> None:
 
 def test_drilldown_keeps_all_when_fewer_than_top_n() -> None:
     root = build_wide_tree(3)
-    uncompressed = compute_all_uncompressed_stats(root)
-    drilldown = build_drilldown_tree(root, uncompressed, top_n=10, max_depth=5)
+    drilldown = build_drilldown_tree(root, top_n=10, max_depth=5)
 
     assert len(drilldown.children) == 3
     assert all("Other" not in str(c.path) for c in drilldown.children)
@@ -249,9 +244,7 @@ def test_drilldown_respects_max_depth() -> None:
             ),
         ],
     )
-    uncompressed = compute_all_uncompressed_stats(root)
-
-    drilldown = build_drilldown_tree(root, uncompressed, top_n=10, max_depth=2)
+    drilldown = build_drilldown_tree(root, top_n=10, max_depth=2)
 
     # depth 0 = /a, depth 1 = /a/b, depth 2 = /a/b/c (hit limit, becomes leaf)
     assert drilldown.children[0].children[0].children == []
@@ -259,8 +252,7 @@ def test_drilldown_respects_max_depth() -> None:
 
 def test_drilldown_other_node_bytes_equal_remainder_sum() -> None:
     root = build_wide_tree(6)
-    uncompressed = compute_all_uncompressed_stats(root)
-    drilldown = build_drilldown_tree(root, uncompressed, top_n=2, max_depth=5)
+    drilldown = build_drilldown_tree(root, top_n=2, max_depth=5)
 
     other = drilldown.children[-1]
     # Kept: f0 (600), f1 (500). Remainder: f2 (400) + f3 (300) + f4 (200) + f5 (100) = 1000

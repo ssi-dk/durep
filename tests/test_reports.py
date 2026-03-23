@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from durep.analytics import (
     build_drilldown_tree,
-    compute_all_uncompressed_stats,
     compute_directory_deltas,
 )
 from durep.ncdu import NcduDir
@@ -29,8 +28,7 @@ def test_d3_leaf_sum_matches_total_bytes_with_dir_overhead() -> None:
         disk_size=512,
     )
 
-    uncompressed = compute_all_uncompressed_stats(root)
-    drilldown = build_drilldown_tree(root, uncompressed, top_n=25, max_depth=100)
+    drilldown = build_drilldown_tree(root, top_n=25, max_depth=100)
     d3 = drilldown_to_d3(drilldown)
 
     assert d3_leaf_sum(d3) == root.total_bytes
@@ -44,8 +42,7 @@ def test_d3_leaf_sum_matches_total_bytes_without_dir_overhead() -> None:
         disk_size=0,
     )
 
-    uncompressed = compute_all_uncompressed_stats(root)
-    drilldown = build_drilldown_tree(root, uncompressed, top_n=25, max_depth=100)
+    drilldown = build_drilldown_tree(root, top_n=25, max_depth=100)
     d3 = drilldown_to_d3(drilldown)
 
     assert d3_leaf_sum(d3) == root.total_bytes
@@ -66,8 +63,7 @@ def test_d3_previous_bytes_matches_when_unchanged() -> None:
     current = make_tree()
     previous = make_tree()
     deltas = compute_directory_deltas(current, previous)
-    uncompressed = compute_all_uncompressed_stats(current)
-    drilldown = build_drilldown_tree(current, uncompressed, top_n=25, max_depth=100, deltas=deltas)
+    drilldown = build_drilldown_tree(current, top_n=25, max_depth=100, deltas=deltas)
     d3 = drilldown_to_d3(drilldown)
 
     def check_all_deltas_zero(node: dict) -> None:
