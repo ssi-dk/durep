@@ -3,11 +3,13 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
 from durep.analytics import (
+    ProjectSample,
     build_drilldown_tree,
     build_growth_drilldown,
     build_overview_series,
@@ -52,15 +54,19 @@ class DetailArgs:
 class OverviewArgs:
     scans: list[Path]
     out_dir: Path
+    jobs: int | None
 
     @classmethod
     def from_namespace(cls, namespace: argparse.Namespace) -> OverviewArgs:
         return cls(
             scans=[Path(p) for p in namespace.scan],
             out_dir=Path(namespace.out_dir),
+            jobs=namespace.jobs,
         )
 
     def validate(self) -> None:
+        if self.jobs is not None and self.jobs < 1:
+            raise ValueError("jobs must be an integer > 0")
         for scan in self.scans:
             require_file(scan, str(scan))
 
@@ -121,6 +127,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="One or more ncdu JSON scan paths.",
     )
     overview.add_argument(
+        "--jobs",
+        type=positive_int,
+        default=None,
+        help="Worker processes for parsing overview scans. Defaults to auto, capped at 8.",
+    )
+    overview.add_argument(
         "--out-dir", required=True, help="Output directory for generated reports."
     )
 
@@ -157,6 +169,35 @@ def configure_logging(cli_value: str | None) -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+
+def load_overview_sample(scan_path: Path) -> ProjectSample:
+    return parse_ncdu_project_sample(scan_path)
+
+
+def effective_overview_jobs(requested_jobs: int | None, n_scans: int) -> int:
+    if requested_jobs is not None:
+        return requested_jobs
+    return min(n_scans, os.cpu_count() or 1, 8)
+
+
+def load_overview_samples(scans: list[Path], jobs: int) -> list[ProjectSample]:
+    for scan_path in scans:
+        log.info("Queueing overview scan: %s", scan_path)
+
+    if jobs <= 1:
+        return [load_overview_sample(scan_path) for scan_path in scans]
+
+    log.info("Loading overview samples with %d worker processes", jobs)
+    try:
+        with ProcessPoolExecutor(max_workers=jobs) as executor:
+            try:
+                return list(executor.map(load_overview_sample, scans))
+            except ValueError as exc:
+                raise ValueError(str(exc)) from None
+    except (NotImplementedError, PermissionError):
+        log.warning("Process pool unavailable; falling back to serial overview parsing")
+        return [load_overview_sample(scan_path) for scan_path in scans]
 
 
 def order_runs(run_a: NcduRun, run_b: NcduRun) -> tuple[NcduRun, NcduRun]:
@@ -237,11 +278,8 @@ def execute_overview(args: OverviewArgs) -> None:
     out_dir.mkdir(parents=True)
     log.info("Output directory: %s", out_dir)
 
-    samples = []
-    for scan_path in args.scans:
-        log.info("Parsing scan: %s", scan_path)
-        sample = parse_ncdu_project_sample(scan_path)
-        samples.append(sample)
+    jobs = effective_overview_jobs(args.jobs, len(args.scans))
+    samples = load_overview_samples(args.scans, jobs)
 
     series = build_overview_series(samples)
 

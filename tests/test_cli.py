@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from durep.cli import run
+from durep.cli import effective_overview_jobs, load_overview_samples, run
 
 
 MINIMAL_NCDU = [
@@ -30,6 +30,10 @@ def write_ncdu(
     ]
     path.write_text(json.dumps(data), encoding="utf-8")
     return path
+
+
+def normalize_generated(text: str) -> str:
+    return "\n".join(line for line in text.splitlines() if not line.startswith("Generated:"))
 
 
 # --- detail subcommand ---
@@ -147,9 +151,89 @@ def test_overview_multiple_scans(tmp_path: Path) -> None:
     assert "proj_b" in text
 
 
+def test_overview_multiple_scans_with_jobs_2(tmp_path: Path) -> None:
+    scan_a = write_ncdu(tmp_path / "a.json", timestamp=1700000000, root_name="/proj_a", dsize=500)
+    scan_b = write_ncdu(tmp_path / "b.json", timestamp=1700086400, root_name="/proj_b", dsize=300)
+    scan_c = write_ncdu(tmp_path / "c.json", timestamp=1700172800, root_name="/proj_a", dsize=600)
+    out_dir = tmp_path / "out"
+
+    exit_code = run(
+        [
+            "overview",
+            str(scan_a),
+            str(scan_b),
+            str(scan_c),
+            "--jobs",
+            "2",
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+
+    assert exit_code == 0
+    assert (out_dir / "text_report.txt").is_file()
+    assert (out_dir / "overview.html").is_file()
+
+
+def test_overview_jobs_1_matches_jobs_2_output(tmp_path: Path) -> None:
+    scan_a = write_ncdu(tmp_path / "a.json", timestamp=1700000000, root_name="/proj_a", dsize=500)
+    scan_b = write_ncdu(tmp_path / "b.json", timestamp=1700086400, root_name="/proj_b", dsize=300)
+    scan_c = write_ncdu(tmp_path / "c.json", timestamp=1700172800, root_name="/proj_a", dsize=600)
+
+    out_serial = tmp_path / "out_serial"
+    run(
+        [
+            "overview",
+            str(scan_a),
+            str(scan_b),
+            str(scan_c),
+            "--jobs",
+            "1",
+            "--out-dir",
+            str(out_serial),
+        ]
+    )
+
+    out_parallel = tmp_path / "out_parallel"
+    run(
+        [
+            "overview",
+            str(scan_a),
+            str(scan_b),
+            str(scan_c),
+            "--jobs",
+            "2",
+            "--out-dir",
+            str(out_parallel),
+        ]
+    )
+
+    serial_text = (out_serial / "text_report.txt").read_text(encoding="utf-8")
+    parallel_text = (out_parallel / "text_report.txt").read_text(encoding="utf-8")
+    assert normalize_generated(serial_text) == normalize_generated(parallel_text)
+
+    serial_html = (out_serial / "overview.html").read_text(encoding="utf-8")
+    parallel_html = (out_parallel / "overview.html").read_text(encoding="utf-8")
+    assert normalize_generated(serial_html) == normalize_generated(parallel_html)
+
+
 def test_overview_rejects_missing_file(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         run(["overview", str(tmp_path / "missing.json"), "--out-dir", str(tmp_path / "out")])
+
+
+def test_overview_rejects_jobs_zero(tmp_path: Path) -> None:
+    scan = write_ncdu(tmp_path / "scan.json")
+
+    with pytest.raises(SystemExit):
+        run(["overview", str(scan), "--jobs", "0", "--out-dir", str(tmp_path / "out")])
+
+
+def test_overview_rejects_negative_jobs(tmp_path: Path) -> None:
+    scan = write_ncdu(tmp_path / "scan.json")
+
+    with pytest.raises(SystemExit):
+        run(["overview", str(scan), "--jobs", "-1", "--out-dir", str(tmp_path / "out")])
 
 
 def test_overview_rejects_missing_timestamp(tmp_path: Path) -> None:
@@ -164,3 +248,48 @@ def test_overview_rejects_missing_timestamp(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="timestamp"):
         run(["overview", str(scan), "--out-dir", str(tmp_path / "out")])
+
+
+def test_overview_parallel_preserves_parse_error_details(tmp_path: Path) -> None:
+    good = write_ncdu(tmp_path / "good.json")
+    bad = tmp_path / "bad.json"
+    bad.write_text(
+        '[1, 2, {"progname": "ncdu", "timestamp": 1700000000}, {"name": }]', encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match=r"Invalid NCDU JSON file at .*parse error:"):
+        run(["overview", str(good), str(bad), "--jobs", "2", "--out-dir", str(tmp_path / "out")])
+
+
+def test_effective_overview_jobs_caps_auto_workers_at_8(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("durep.cli.os.cpu_count", lambda: 64)
+
+    assert effective_overview_jobs(None, 20) == 8
+
+
+def test_effective_overview_jobs_is_bounded_by_scan_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("durep.cli.os.cpu_count", lambda: 64)
+
+    assert effective_overview_jobs(None, 3) == 3
+
+
+def test_load_overview_samples_falls_back_to_serial_when_process_pool_unavailable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    scan_a = tmp_path / "a.json"
+    scan_b = tmp_path / "b.json"
+    scans = [scan_a, scan_b]
+
+    class RaisingExecutor:
+        def __init__(self, max_workers: int) -> None:
+            raise PermissionError("blocked")
+
+    monkeypatch.setattr("durep.cli.ProcessPoolExecutor", RaisingExecutor)
+    monkeypatch.setattr(
+        "durep.cli.load_overview_sample",
+        lambda scan_path: scan_path.name,  # type: ignore[return-value]
+    )
+
+    assert load_overview_samples(scans, jobs=2) == ["a.json", "b.json"]
