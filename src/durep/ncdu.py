@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import ijson  # type: ignore[import-untyped]
+
+if TYPE_CHECKING:
+    from durep.analytics import ProjectSample
 
 EXTENSIONS = {
     "fasta": ["fna", "faa", "fasta", "fa"],
@@ -127,23 +130,64 @@ class NcduRun:
 Event = tuple[str, Any]
 
 
+@dataclass(slots=True)
+class DirAggregate:
+    basename: str
+    disk_size: int
+    total_bytes: int
+    total_files: int
+    total_directories: int
+    uncompressed: UncompressedStats
+
+
 def parse_ncdu_json_file(path: Path, top_n: int | None = None) -> NcduRun:
+    return parse_ncdu_file(path, parse_tree_to_run, top_n)
+
+
+def parse_ncdu_project_sample(path: Path) -> "ProjectSample":
+    return parse_ncdu_file(path, parse_tree_to_project_sample)
+
+
+def parse_ncdu_file(path: Path, parse_body: Callable[..., Any], *parse_args: Any) -> Any:
     error_prefix = f"Invalid NCDU JSON file at {str(path)}: "
 
     with path.open("rb") as handle:
-        parser: Iterator[Event] = ijson.basic_parse(handle)
         try:
+            parser: Iterator[Event] = ijson.basic_parse(handle)
             timestamp = parse_header(parser, error_prefix)
-            root = parse_tree_streaming(parser, top_n=top_n)
+            return parse_body(parser, timestamp, *parse_args)
         except (ijson.JSONError, StopIteration) as exc:
             raise ValueError(
                 error_prefix + "NCDU JSON file is not a valid version 1 NCDU format file"
             ) from exc
 
+
+def parse_tree_to_run(parser: Iterator[Event], timestamp: datetime, top_n: int | None) -> NcduRun:
+    root = parse_tree_streaming(parser, top_n=top_n)
     if root.parent is None and not Path(root.basename).is_absolute():
         raise ValueError(f"Root node path must be absolute, got: {root.basename}")
-
     return NcduRun(root=root, timestamp=timestamp)
+
+
+def parse_tree_to_project_sample(parser: Iterator[Event], timestamp: datetime) -> "ProjectSample":
+    from durep.analytics import ProjectSample
+
+    root = parse_tree_aggregate_streaming(parser)
+    root_path = Path(root.basename)
+    if not root_path.is_absolute():
+        raise ValueError(f"Root node path must be absolute, got: {root.basename}")
+
+    root_str = str(root_path)
+    project = root_str.rsplit("/", 1)[-1] or root_str
+    return ProjectSample(
+        project=project,
+        timestamp=timestamp,
+        date=timestamp.date(),
+        total_bytes=root.total_bytes,
+        total_files=root.total_files,
+        total_directories=root.total_directories,
+        uncompressed=root.uncompressed,
+    )
 
 
 def parse_header(parser: Iterator[Event], error_prefix: str) -> datetime:
@@ -287,6 +331,76 @@ def parse_tree_streaming(parser: Iterator[Event], top_n: int | None = None) -> N
                 if dir_stack:
                     parent = dir_stack[-1]
                     parent.children.append(finished)
+                    parent.total_bytes += finished.total_bytes
+                    parent.total_files += finished.total_files
+                    parent.total_directories += finished.total_directories
+                    parent.uncompressed.fasta += finished.uncompressed.fasta
+                    parent.uncompressed.fastq += finished.uncompressed.fastq
+                    parent.uncompressed.vcf += finished.uncompressed.vcf
+                    parent.uncompressed.sam += finished.uncompressed.sam
+                else:
+                    root = finished
+
+        elif in_map:
+            current_map[map_key] = value
+
+    if root is None:
+        raise ValueError("Fourth field (root directory) is not a valid directory in NCDU format")
+    return root
+
+
+def parse_tree_aggregate_streaming(parser: Iterator[Event]) -> DirAggregate:
+    dir_stack: list[DirAggregate] = []
+    awaiting_dir_metadata = False
+    current_map: dict[str, Any] = {}
+    in_map = False
+    map_key = ""
+    root: DirAggregate | None = None
+
+    for event, value in parser:
+        if event == "start_array":
+            awaiting_dir_metadata = True
+
+        elif event == "start_map":
+            in_map = True
+            current_map = {}
+
+        elif event == "map_key":
+            map_key = value
+
+        elif event == "end_map":
+            in_map = False
+            if awaiting_dir_metadata:
+                awaiting_dir_metadata = False
+                disk_size = parse_disk_size(current_map)
+                dir_stack.append(
+                    DirAggregate(
+                        basename=get_required_name(current_map),
+                        disk_size=disk_size,
+                        total_bytes=disk_size,
+                        total_files=0,
+                        total_directories=1,
+                        uncompressed=UncompressedStats.zero(),
+                    )
+                )
+            else:
+                parent = dir_stack[-1]
+                disk_size = parse_disk_size(current_map)
+                uncompressed = UncompressedStats.from_file_node(
+                    get_required_name(current_map), disk_size
+                )
+                parent.total_bytes += disk_size
+                parent.total_files += 1
+                parent.uncompressed.fasta += uncompressed.fasta
+                parent.uncompressed.fastq += uncompressed.fastq
+                parent.uncompressed.vcf += uncompressed.vcf
+                parent.uncompressed.sam += uncompressed.sam
+
+        elif event == "end_array":
+            if dir_stack:
+                finished = dir_stack.pop()
+                if dir_stack:
+                    parent = dir_stack[-1]
                     parent.total_bytes += finished.total_bytes
                     parent.total_files += finished.total_files
                     parent.total_directories += finished.total_directories

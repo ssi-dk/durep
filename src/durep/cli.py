@@ -13,9 +13,8 @@ from durep.analytics import (
     build_overview_series,
     compute_directory_deltas,
     compute_global_metrics,
-    extract_project_sample,
 )
-from durep.ncdu import NcduRun, parse_ncdu_json_file, path_str
+from durep.ncdu import NcduRun, parse_ncdu_json_file, parse_ncdu_project_sample, path_str
 from durep.reports import (
     render_html_report,
     render_overview_html_report,
@@ -241,8 +240,7 @@ def execute_overview(args: OverviewArgs) -> None:
     samples = []
     for scan_path in args.scans:
         log.info("Parsing scan: %s", scan_path)
-        run = parse_ncdu_json_file(scan_path)
-        sample = extract_project_sample(run)
+        sample = parse_ncdu_project_sample(scan_path)
         samples.append(sample)
 
     series = build_overview_series(samples)

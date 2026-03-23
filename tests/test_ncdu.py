@@ -8,7 +8,15 @@ import pytest
 
 from collections.abc import Sequence
 
-from durep.ncdu import CollapsedNode, NcduDir, NcduFile, full_path, parse_ncdu_json_file
+from durep.analytics import extract_project_sample
+from durep.ncdu import (
+    CollapsedNode,
+    NcduDir,
+    NcduFile,
+    full_path,
+    parse_ncdu_json_file,
+    parse_ncdu_project_sample,
+)
 
 
 def write_ncdu_json(path: Path, root: Sequence[object], timestamp: int = 1700000000) -> None:
@@ -156,6 +164,70 @@ def test_parse_ncdu_json_file_directory_only_children(tmp_path: Path) -> None:
     assert root.total_bytes == 24
     assert len(root.children) == 2
     assert all(isinstance(c, NcduDir) for c in root.children)
+
+
+def test_parse_ncdu_project_sample_matches_tree_parser_for_nested_tree(tmp_path: Path) -> None:
+    root_tree = [
+        {"name": "/proj", "dsize": 10},
+        {"name": "reads.fastq", "dsize": 100},
+        [
+            {"name": "sub", "dsize": 5},
+            {"name": "genome.fasta", "dsize": 30},
+            [{"name": "deep", "dsize": 2}, {"name": "align.sam", "dsize": 40}],
+        ],
+    ]
+
+    source = tmp_path / "snapshot.json"
+    write_ncdu_json(source, root_tree, timestamp=1700000000)
+
+    lazy_sample = parse_ncdu_project_sample(source)
+    tree_sample = extract_project_sample(parse_ncdu_json_file(source))
+
+    assert lazy_sample == tree_sample
+
+
+def test_parse_ncdu_project_sample_matches_tree_parser_for_directory_only_tree(
+    tmp_path: Path,
+) -> None:
+    root_tree = [
+        {"name": "/proj", "dsize": 10},
+        [{"name": "sub1", "dsize": 5}],
+        [{"name": "sub2", "dsize": 7}],
+    ]
+
+    source = tmp_path / "snapshot.json"
+    write_ncdu_json(source, root_tree, timestamp=1700000000)
+
+    lazy_sample = parse_ncdu_project_sample(source)
+    tree_sample = extract_project_sample(parse_ncdu_json_file(source))
+
+    assert lazy_sample == tree_sample
+
+
+def test_parse_ncdu_project_sample_rejects_relative_root_name(tmp_path: Path) -> None:
+    source = tmp_path / "snapshot.json"
+    write_ncdu_json(source, [{"name": "tmp", "asize": 1}])
+
+    with pytest.raises(ValueError, match="Root node path must be absolute"):
+        parse_ncdu_project_sample(source)
+
+
+def test_parse_ncdu_project_sample_rejects_missing_timestamp(tmp_path: Path) -> None:
+    payload = [1, 2, {"progname": "ncdu"}, [{"name": "/", "asize": 1}]]
+
+    source = tmp_path / "snapshot.json"
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Does not contain expected timestamp field in metadata"):
+        parse_ncdu_project_sample(source)
+
+
+def test_parse_ncdu_project_sample_rejects_truncated_json(tmp_path: Path) -> None:
+    source = tmp_path / "snapshot.json"
+    source.write_text("[1]", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="not a valid version 1 NCDU format file"):
+        parse_ncdu_project_sample(source)
 
 
 def test_parse_with_top_n_collapses_excess_children(tmp_path: Path) -> None:
