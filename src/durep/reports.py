@@ -320,17 +320,6 @@ function renderSunburst(containerId, data, formatBytes) {
   const labelGroup = svg.append("g")
     .attr("pointer-events", "none");
 
-  const paths = pathGroup.selectAll("path")
-    .data(root.descendants().filter(d => d.depth))
-    .join("path")
-      .attr("fill", deltaColor)
-      .attr("fill-opacity", d => { const r = d.depth - focus.depth; if (r < 1 || r > maxVisibleRings) return 0; return deltaOpacity(d); })
-      .attr("d", arc)
-      .style("cursor", "pointer");
-
-  paths.append("title")
-    .text(d => { let t = d.ancestors().map(a => a.data.name).reverse().join("/") + "\\n" + formatBytes(d.value); const dt = formatDelta(d); if (dt) t += "\\n" + dt; return t; });
-
   function labelTransform(d) {
     const angle = (d.current.x0 + d.current.x1) / 2;
     const angleDeg = angle * 180 / Math.PI;
@@ -366,25 +355,112 @@ function renderSunburst(containerId, data, formatBytes) {
     return name.slice(0, maxChars - 1) + "\\u2026";
   }
 
-  function updateLabels() {
-    const labels = labelGroup.selectAll("text")
-      .data(root.descendants().filter(d => d.depth), d => d.data.name + d.depth);
-    labels.exit().remove();
-    const entered = labels.enter().append("text")
-      .attr("dy", "0.35em");
-    const merged = entered.merge(labels);
-    merged
-      .attr("transform", labelTransform)
-      .attr("text-anchor", labelAnchor)
-      .attr("fill-opacity", d => labelVisible(d) ? 1 : 0)
-      .text(truncateLabel);
-  }
-
-  updateLabels();
-
   function fullPath(d) {
     return d.ancestors().map(a => a.data.name).reverse().join("/");
   }
+
+  function nodeKey(d) {
+    return fullPath(d);
+  }
+
+  function visibleNodes(p) {
+    return p.descendants().filter(d => d !== p && d.depth - p.depth <= maxVisibleRings);
+  }
+
+  function visiblePathNodes(p) {
+    if (p === root) return visibleNodes(p);
+    return [p].concat(visibleNodes(p));
+  }
+
+  function titleText(d) {
+    let t = fullPath(d) + "\\n" + formatBytes(d.value);
+    const dt = formatDelta(d);
+    if (dt) t += "\\n" + dt;
+    return t;
+  }
+
+  function handlePathClick(event, p) {
+    if (focus === p) { p = p.parent || root; }
+    // Don't zoom into leaf nodes (no children to show); zoom to parent instead
+    else if (!p.children || p.children.length === 0) { p = p.parent || root; }
+    zoomTo(p);
+  }
+
+  function updatePaths(t) {
+    const paths = pathGroup.selectAll("path")
+      .data(visiblePathNodes(focus), nodeKey);
+
+    const exiting = paths.exit();
+    const entered = paths.enter().append("path")
+      .attr("fill", deltaColor)
+      .style("cursor", "pointer")
+      .on("click", handlePathClick)
+      .each(d => {
+        if (d.current !== d) return;
+        const target = d.target || d;
+        if (target === d) return;
+        const angle = (target.x0 + target.x1) / 2;
+        d.current = {x0: angle, x1: angle, y0: target.y0, y1: target.y0};
+      });
+
+    entered.append("title");
+
+    const merged = entered.merge(paths)
+      .attr("fill", deltaColor)
+      .on("click", handlePathClick);
+
+    merged.select("title").text(titleText);
+
+    if (t) {
+      exiting.transition(t)
+        .tween("data", d => {
+          const angle = (d.target.x0 + d.target.x1) / 2;
+          const collapsed = {x0: angle, x1: angle, y0: d.target.y0, y1: d.target.y0};
+          const i = d3.interpolate(d.current, collapsed);
+          return t => { d.current = i(t); };
+        })
+        .attrTween("d", d => () => currentArc(d))
+        .attr("fill-opacity", 0)
+        .remove();
+
+      merged.transition(t)
+        .tween("data", d => {
+          const i = d3.interpolate(d.current, d.target);
+          return t => { d.current = i(t); };
+        })
+        .attrTween("d", d => () => currentArc(d))
+        .attr("fill-opacity", d => d === focus ? 0 : deltaOpacity(d));
+    } else {
+      exiting.remove();
+      merged
+        .attr("fill-opacity", d => d === focus ? 0 : deltaOpacity(d))
+        .attr("d", d => {
+          d.current = d.target || d.current;
+          return currentArc(d);
+        });
+    }
+  }
+
+  function updateLabels() {
+    const labels = labelGroup.selectAll("text")
+      .data(visibleNodes(focus), nodeKey);
+
+    labels.exit().remove();
+
+    const entered = labels.enter().append("text")
+      .attr("dy", "0.35em");
+
+    const merged = entered.merge(labels)
+      .text(truncateLabel);
+
+    merged
+      .attr("transform", labelTransform)
+      .attr("text-anchor", labelAnchor)
+      .attr("fill-opacity", d => labelVisible(d) ? 1 : 0);
+  }
+
+  updatePaths(null);
+  updateLabels();
 
   function zoomTo(p) {
     focus = p;
@@ -423,26 +499,10 @@ function renderSunburst(containerId, data, formatBytes) {
 
     const t = svg.transition().duration(500);
 
-    paths.transition(t)
-      .tween("data", d => {
-        const i = d3.interpolate(d.current, d.target);
-        return t => { d.current = i(t); };
-      })
-      .attrTween("d", d => () => currentArc(d))
-      .attr("fill-opacity", d => { const r = d.depth - p.depth; if (r < 1 || r > maxVisibleRings) return 0; return deltaOpacity(d); });
-
-    // Fade labels out during transition, then rebuild after
+    updatePaths(t);
     labelGroup.selectAll("text").transition(t).attr("fill-opacity", 0);
     t.end().then(() => updateLabels());
   }
-
-  // Click to zoom into a node; clicking the focused node goes up one level
-  paths.on("click", function(event, p) {
-    if (focus === p) { p = p.parent || root; }
-    // Don't zoom into leaf nodes (no children to show); zoom to parent instead
-    else if (!p.children || p.children.length === 0) { p = p.parent || root; }
-    zoomTo(p);
-  });
 
   resetBtn.on("click", function() { zoomTo(root); });
 }
