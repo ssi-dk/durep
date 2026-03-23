@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+from collections.abc import Sequence
 from pathlib import Path
 
 from durep.analytics import (
@@ -25,7 +26,7 @@ def make_file(parent: Path, name: str, disk_size: int) -> NcduFile:
     )
 
 
-def make_dir(path: Path, children: list[NcduEntry], disk_size: int = 0) -> NcduDir:
+def make_dir(path: Path, children: Sequence[NcduEntry], disk_size: int = 0) -> NcduDir:
     total_bytes = disk_size + sum(c.total_bytes for c in children)
     total_files = sum(c.total_files if isinstance(c, NcduDir) else 1 for c in children)
     total_dirs = 1 + sum(c.total_directories for c in children if isinstance(c, NcduDir))
@@ -35,7 +36,7 @@ def make_dir(path: Path, children: list[NcduEntry], disk_size: int = 0) -> NcduD
         total_bytes=total_bytes,
         total_files=total_files,
         total_directories=total_dirs,
-        children=children,
+        children=list(children),
     )
 
 

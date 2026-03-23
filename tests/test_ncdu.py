@@ -6,10 +6,12 @@ from pathlib import Path
 
 import pytest
 
+from collections.abc import Sequence
+
 from durep.ncdu import NcduDir, NcduFile, parse_ncdu_json_file
 
 
-def write_ncdu_json(path: Path, root: list[object], timestamp: int = 1700000000) -> None:
+def write_ncdu_json(path: Path, root: Sequence[object], timestamp: int = 1700000000) -> None:
     payload = [1, 2, {"progname": "ncdu", "timestamp": timestamp}, root]
     path.write_text(json.dumps(payload), encoding="utf-8")
 

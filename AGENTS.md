@@ -34,7 +34,13 @@ Open the generated `overall.html` in a browser and verify:
 ## Coding style
 * Never add an AI agent as a co-author on commits
 * Do not prepend single underscores to names; the only API is the CLI, so all functions are private
-* After making changes, run `ruff check .` and address warnings, then run `ruff format .`
+
+## After making changes:
+* Check for type errors using `.venv/bin/pyright 2>&1`. Fix errors IF you judge that the errors are not false positives,
+  and that fixing them will not degrade the code.
+  An example of where fixing the error may degrade the code is if a NumPy array does not play well with typing,
+  and you could fix the type errors by switching to a normal list, but that would degrade performance.
+* After types pass, run `ruff check .` and address warnings, then run `ruff format .`
 
 ## Other notes:
 * The only stable API is the CLI, so any source-code level changes are considered non-breaking.

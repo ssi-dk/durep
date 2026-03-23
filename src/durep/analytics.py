@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -173,7 +174,7 @@ def build_drilldown_tree(
 def collapsed_previous_bytes(
     deltas: dict[Path, PathDelta] | None,
     parent_path: Path,
-    distinct_nodes: list[NcduEntry],
+    distinct_nodes: Sequence[NcduEntry],
 ) -> int | None:
     """Compute previous_bytes for a synthetic collapsed node.
 

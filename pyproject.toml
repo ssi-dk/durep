@@ -14,7 +14,7 @@ authors = [
 dependencies = []
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-cov"]
+test = ["pytest", "pytest-cov", "pyright"]
 all = ["pytest", "pytest-cov"]
 
 [project.scripts]
@@ -29,6 +29,10 @@ path = "src/durep/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/durep"]
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
 
 [tool.ruff]
 line-length = 100
