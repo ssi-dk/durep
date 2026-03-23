@@ -4,24 +4,35 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 
 @dataclass(slots=True)
-class NcduNode:
-    # Absolute path: root must be absolute, children are resolved from their parent
+class NcduFile:
     path: Path
-    node_type: Literal["dir", "file"]
+    disk_size: int
+
+    @property
+    def total_bytes(self) -> int:
+        return self.disk_size
+
+
+@dataclass(slots=True)
+class NcduDir:
+    path: Path
     disk_size: int
     total_bytes: int
     total_files: int
     total_directories: int
-    children: list[NcduNode] = field(default_factory=list)
+    children: list[NcduEntry] = field(default_factory=list)
+
+
+NcduEntry = NcduDir | NcduFile
 
 
 @dataclass(slots=True)
 class NcduRun:
-    root: NcduNode
+    root: NcduDir
     timestamp: datetime | None = None
 
 
@@ -64,7 +75,7 @@ def is_dir_tree(value: Any) -> bool:
     )
 
 
-def parse_dir_tree(tree: list[Any], parent_path: Path | None) -> NcduNode:
+def parse_dir_tree(tree: list[Any], parent_path: Path | None) -> NcduDir:
     # First entry in a dir is the dir itself
     metadata = tree[0]
     if not isinstance(metadata, dict):
@@ -74,7 +85,7 @@ def parse_dir_tree(tree: list[Any], parent_path: Path | None) -> NcduNode:
     disk_size = parse_disk_size(metadata)
 
     # Subsequent entries in a dir list is its direct children
-    children: list[NcduNode] = []
+    children: list[NcduEntry] = []
     for child in tree[1:]:
         if isinstance(child, dict):
             children.append(parse_file_entry(child, parent_path=node_path))
@@ -85,11 +96,10 @@ def parse_dir_tree(tree: list[Any], parent_path: Path | None) -> NcduNode:
     # Since these are computed recursively already, this pass here only need to
     # touch the top level subdirectories, and so will be fast
     total_bytes = disk_size + sum(child.total_bytes for child in children)
-    total_files = sum(child.total_files for child in children)
-    total_directories = 1 + sum(child.total_directories for child in children)
-    return NcduNode(
+    total_files = sum(c.total_files if isinstance(c, NcduDir) else 1 for c in children)
+    total_directories = 1 + sum(c.total_directories for c in children if isinstance(c, NcduDir))
+    return NcduDir(
         path=node_path,
-        node_type="dir",
         disk_size=disk_size,
         total_bytes=total_bytes,
         total_files=total_files,
@@ -98,17 +108,13 @@ def parse_dir_tree(tree: list[Any], parent_path: Path | None) -> NcduNode:
     )
 
 
-def parse_file_entry(entry: dict[str, Any], parent_path: Path) -> NcduNode:
+def parse_file_entry(entry: dict[str, Any], parent_path: Path) -> NcduFile:
     name = get_required_name(entry)
     node_path = resolve_child_path(parent_path=parent_path, name=name)
     disk_size = parse_disk_size(entry)
-    return NcduNode(
+    return NcduFile(
         path=node_path,
-        node_type="file",
         disk_size=disk_size,
-        total_bytes=disk_size,
-        total_files=1,
-        total_directories=0,
     )
 
 

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from durep.ncdu import parse_ncdu_json_file
+from durep.ncdu import NcduDir, NcduFile, parse_ncdu_json_file
 
 
 def write_ncdu_json(path: Path, root: list[object], timestamp: int = 1700000000) -> None:
@@ -34,36 +34,35 @@ def test_parse_ncdu_json_file_builds_normalized_tree_with_aggregates(tmp_path: P
 
     root = run.root
 
+    assert isinstance(root, NcduDir)
     assert root.path == Path("/")
-    assert root.node_type == "dir"
     assert root.disk_size == 120
     assert root.total_bytes == 143
     assert root.total_files == 3
     assert root.total_directories == 3
 
     file_a = root.children[0]
+    assert isinstance(file_a, NcduFile)
     assert file_a.path == Path("/file_a.bin")
-    assert file_a.node_type == "file"
     assert file_a.disk_size == 12
-    assert file_a.total_files == 1
-    assert file_a.total_directories == 0
 
     dir1 = root.children[1]
+    assert isinstance(dir1, NcduDir)
     assert dir1.path == Path("/dir1")
-    assert dir1.node_type == "dir"
     assert dir1.disk_size == 0
     assert dir1.total_bytes == 11
     assert dir1.total_files == 2
     assert dir1.total_directories == 2
 
     dir2 = dir1.children[1]
+    assert isinstance(dir2, NcduDir)
     assert dir2.path == Path("/dir1/dir2")
-    assert dir2.node_type == "dir"
     assert dir2.total_bytes == 3
     assert dir2.total_files == 1
     assert dir2.total_directories == 1
 
     deep = dir2.children[0]
+    assert isinstance(deep, NcduFile)
     assert deep.path == Path("/dir1/dir2/deep.bin")
     assert deep.disk_size == 0
 

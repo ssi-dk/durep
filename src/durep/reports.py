@@ -13,7 +13,7 @@ from durep.analytics import (
     ProjectSample,
     ProjectTimeSeries,
 )
-from durep.ncdu import NcduNode, NcduRun
+from durep.ncdu import NcduDir, NcduRun
 
 
 def format_bytes(n: int) -> str:
@@ -136,7 +136,7 @@ def render_text_report(
 
 
 def _compute_direct_deltas(
-    root: NcduNode, deltas: dict[Path, PathDelta]
+    root: NcduDir, deltas: dict[Path, PathDelta]
 ) -> list[tuple[PathDelta, int]]:
     """Compute the direct (self) delta for each directory.
 
@@ -144,34 +144,36 @@ def _compute_direct_deltas(
     to isolate the change from its own direct files.
     """
     result: list[tuple[PathDelta, int]] = []
-    stack = [root]
+    stack: list[NcduDir] = [root]
     while stack:
         node = stack.pop()
-        if node.node_type == "dir":
-            delta = deltas.get(node.path)
-            if delta is not None:
-                child_dir_delta = sum(
-                    deltas[c.path].delta_bytes
-                    for c in node.children
-                    if c.node_type == "dir" and c.path in deltas
-                )
-                direct = delta.delta_bytes - child_dir_delta
-                if direct != 0:
-                    result.append((delta, direct))
-            stack.extend(node.children)
+        delta = deltas.get(node.path)
+        if delta is not None:
+            child_dir_delta = sum(
+                deltas[c.path].delta_bytes
+                for c in node.children
+                if isinstance(c, NcduDir) and c.path in deltas
+            )
+            direct = delta.delta_bytes - child_dir_delta
+            if direct != 0:
+                result.append((delta, direct))
+        for c in node.children:
+            if isinstance(c, NcduDir):
+                stack.append(c)
     return result
 
 
-def _collect_dirs_by_direct_bytes(root: NcduNode) -> list[tuple[NcduNode, int]]:
-    result: list[tuple[NcduNode, int]] = []
-    stack = [root]
+def _collect_dirs_by_direct_bytes(root: NcduDir) -> list[tuple[NcduDir, int]]:
+    result: list[tuple[NcduDir, int]] = []
+    stack: list[NcduDir] = [root]
     while stack:
         node = stack.pop()
-        if node.node_type == "dir":
-            child_dir_bytes = sum(c.total_bytes for c in node.children if c.node_type == "dir")
-            direct = node.total_bytes - child_dir_bytes
-            result.append((node, direct))
-            stack.extend(node.children)
+        child_dir_bytes = sum(c.total_bytes for c in node.children if isinstance(c, NcduDir))
+        direct = node.total_bytes - child_dir_bytes
+        result.append((node, direct))
+        for c in node.children:
+            if isinstance(c, NcduDir):
+                stack.append(c)
     return result
 
 

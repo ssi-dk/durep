@@ -7,7 +7,7 @@ from durep.analytics import (
     compute_all_uncompressed_stats,
     compute_directory_deltas,
 )
-from durep.ncdu import NcduNode
+from durep.ncdu import NcduDir
 from durep.reports import drilldown_to_d3
 
 from test_analytics import make_dir, make_file
@@ -61,7 +61,7 @@ def test_d3_previous_bytes_matches_when_unchanged() -> None:
     root_path = Path("/data")
     sub_path = root_path / "sub"
 
-    def make_tree() -> NcduNode:
+    def make_tree() -> NcduDir:
         sub = make_dir(
             sub_path,
             [make_file(sub_path, "a.txt", 1000)],

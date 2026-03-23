@@ -15,27 +15,22 @@ from durep.analytics import (
     compute_global_metrics,
     extract_project_sample,
 )
-from durep.ncdu import NcduNode, NcduRun
+from durep.ncdu import NcduDir, NcduEntry, NcduFile, NcduRun
 
 
-def make_file(parent: Path, name: str, disk_size: int) -> NcduNode:
-    return NcduNode(
+def make_file(parent: Path, name: str, disk_size: int) -> NcduFile:
+    return NcduFile(
         path=parent / name,
-        node_type="file",
         disk_size=disk_size,
-        total_bytes=disk_size,
-        total_files=1,
-        total_directories=0,
     )
 
 
-def make_dir(path: Path, children: list[NcduNode], disk_size: int = 0) -> NcduNode:
+def make_dir(path: Path, children: list[NcduEntry], disk_size: int = 0) -> NcduDir:
     total_bytes = disk_size + sum(c.total_bytes for c in children)
-    total_files = sum(c.total_files for c in children)
-    total_dirs = 1 + sum(c.total_directories for c in children)
-    return NcduNode(
+    total_files = sum(c.total_files if isinstance(c, NcduDir) else 1 for c in children)
+    total_dirs = 1 + sum(c.total_directories for c in children if isinstance(c, NcduDir))
+    return NcduDir(
         path=path,
-        node_type="dir",
         disk_size=disk_size,
         total_bytes=total_bytes,
         total_files=total_files,
@@ -44,7 +39,7 @@ def make_dir(path: Path, children: list[NcduNode], disk_size: int = 0) -> NcduNo
     )
 
 
-def build_bio_tree() -> NcduNode:
+def build_bio_tree() -> NcduDir:
     """Tree with known bioinformatics files for uncompressed stats testing.
 
     /data
@@ -193,7 +188,7 @@ def test_deltas_only_include_paths_present_in_both_snapshots() -> None:
 # --- build_drilldown_tree ---
 
 
-def build_wide_tree(n_children: int) -> NcduNode:
+def build_wide_tree(n_children: int) -> NcduDir:
     """Directory with n_children files of decreasing size."""
     root_path = Path("/wide")
     children = [
