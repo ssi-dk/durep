@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 authors = [
     { name = "SSI-DK" },
 ]
-dependencies = []
+dependencies = ["ijson"]
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-cov", "pyright"]

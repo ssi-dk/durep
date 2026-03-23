@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-import json
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+import ijson  # type: ignore[import-untyped]
 
 EXTENSIONS = {
     "fasta": ["fna", "faa", "fasta", "fa"],
@@ -112,23 +114,58 @@ class NcduRun:
     timestamp: datetime | None = None
 
 
-def parse_ncdu_json_file(path: Path) -> NcduRun:
-    with path.open("r", encoding="utf-8") as handle:
-        data = json.load(handle)
+Event = tuple[str, Any]
 
+
+def parse_ncdu_json_file(path: Path) -> NcduRun:
     error_prefix = f"Invalid NCDU JSON file at {str(path)}: "
 
-    # Per NCDU format, the JSON object is a list with the first two fields
-    # being major and minor versions. Check the version, because otherwise
-    # we don't know how to parse it.
-    if not (isinstance(data, list) and len(data) > 3 and isinstance(data[0], int) and data[0] == 1):
-        raise ValueError(error_prefix + "NCDU JSON file is not a valid version 1 NCDU format file")
-    else:
-        # More fields could be added in a minor version so only check first four
-        (_, _, metadata, root) = data[:4]
+    with path.open("rb") as handle:
+        parser: Iterator[Event] = ijson.basic_parse(handle)
+        try:
+            timestamp = parse_header(parser, error_prefix)
+            root = parse_tree_streaming(parser)
+        except ijson.JSONError as exc:
+            raise ValueError(
+                error_prefix + "NCDU JSON file is not a valid version 1 NCDU format file"
+            ) from exc
 
-    # Extract timestamp
-    if not (isinstance(metadata, dict) and ("timestamp" in metadata)):
+    if root.parent is None and not Path(root.basename).is_absolute():
+        raise ValueError(f"Root node path must be absolute, got: {root.basename}")
+
+    return NcduRun(root=root, timestamp=timestamp)
+
+
+def parse_header(parser: Iterator[Event], error_prefix: str) -> datetime:
+    # Expect: start_array, then number (major version), number (minor version), then metadata map
+    event, value = next(parser)
+    if event != "start_array":
+        raise ValueError(error_prefix + "NCDU JSON file is not a valid version 1 NCDU format file")
+
+    # Major version
+    event, value = next(parser)
+    if event != "number" or value != 1:
+        raise ValueError(error_prefix + "NCDU JSON file is not a valid version 1 NCDU format file")
+
+    # Minor version — just consume it
+    next(parser)
+
+    # Metadata map — accumulate into a dict
+    event, value = next(parser)
+    if event != "start_map":
+        raise ValueError(error_prefix + "Does not contain expected timestamp field in metadata")
+
+    metadata: dict[str, Any] = {}
+    key = ""
+    for event, value in parser:
+        if event == "map_key":
+            key = value
+        elif event == "end_map":
+            break
+        else:
+            metadata[key] = value
+
+    if "timestamp" not in metadata:
         raise ValueError(error_prefix + "Does not contain expected timestamp field in metadata")
 
     try:
@@ -136,80 +173,88 @@ def parse_ncdu_json_file(path: Path) -> NcduRun:
     except (TypeError, ValueError, OverflowError):
         raise ValueError(error_prefix + "could not parse timestamp as POSIX timestamp")
 
-    if not is_dir_tree(root):
+    return timestamp
+
+
+def parse_tree_streaming(parser: Iterator[Event]) -> NcduDir:
+    dir_stack: list[NcduDir] = []
+    awaiting_dir_metadata = False
+    current_map: dict[str, Any] = {}
+    in_map = False
+    map_key = ""
+    root: NcduDir | None = None
+
+    for event, value in parser:
+        if event == "start_array":
+            awaiting_dir_metadata = True
+
+        elif event == "start_map":
+            in_map = True
+            current_map = {}
+
+        elif event == "map_key":
+            map_key = value
+
+        elif event == "end_map":
+            in_map = False
+            if awaiting_dir_metadata:
+                awaiting_dir_metadata = False
+                parent = dir_stack[-1] if dir_stack else None
+                basename = get_required_name(current_map)
+                disk_size = parse_disk_size(current_map)
+                node = NcduDir(
+                    basename=basename,
+                    parent=parent,
+                    disk_size=disk_size,
+                    total_bytes=disk_size,
+                    total_files=0,
+                    total_directories=1,
+                    uncompressed=UncompressedStats.zero(),
+                )
+                dir_stack.append(node)
+            else:
+                parent_dir = dir_stack[-1]
+                basename = get_required_name(current_map)
+                disk_size = parse_disk_size(current_map)
+                uncompressed = UncompressedStats.from_file_node(basename, disk_size)
+                parent_dir.children.append(
+                    NcduFile(
+                        basename=basename,
+                        parent=parent_dir,
+                        disk_size=disk_size,
+                        uncompressed=uncompressed,
+                    )
+                )
+                # Incrementally update parent aggregates
+                parent_dir.total_bytes += disk_size
+                parent_dir.total_files += 1
+                parent_dir.uncompressed.fasta += uncompressed.fasta
+                parent_dir.uncompressed.fastq += uncompressed.fastq
+                parent_dir.uncompressed.vcf += uncompressed.vcf
+                parent_dir.uncompressed.sam += uncompressed.sam
+
+        elif event == "end_array":
+            if dir_stack:
+                finished = dir_stack.pop()
+                if dir_stack:
+                    parent = dir_stack[-1]
+                    parent.children.append(finished)
+                    parent.total_bytes += finished.total_bytes
+                    parent.total_files += finished.total_files
+                    parent.total_directories += finished.total_directories
+                    parent.uncompressed.fasta += finished.uncompressed.fasta
+                    parent.uncompressed.fastq += finished.uncompressed.fastq
+                    parent.uncompressed.vcf += finished.uncompressed.vcf
+                    parent.uncompressed.sam += finished.uncompressed.sam
+                else:
+                    root = finished
+
+        elif in_map:
+            current_map[map_key] = value
+
+    if root is None:
         raise ValueError("Fourth field (root directory) is not a valid directory in NCDU format")
-
-    return NcduRun(root=parse_dir_tree(root, parent=None), timestamp=timestamp)
-
-
-def is_dir_tree(value: Any) -> bool:
-    return (
-        isinstance(value, list)
-        and len(value) > 0
-        and isinstance(value[0], dict)
-        and "name" in value[0]
-    )
-
-
-def parse_dir_tree(tree: list[Any], parent: NcduDir | None) -> NcduDir:
-    # First entry in a dir is the dir itself
-    metadata = tree[0]
-    if not isinstance(metadata, dict):
-        raise ValueError("Directory tree metadata must be a JSON object")
-
-    basename = get_required_name(metadata)
-    if parent is None:
-        # Root node must be absolute
-        if not Path(basename).is_absolute():
-            raise ValueError(f"Root node path must be absolute, got: {basename}")
-
-    disk_size = parse_disk_size(metadata)
-
-    # Create directory node with placeholders, then fill in children + aggregates
-    node = NcduDir(
-        basename=basename,
-        parent=parent,
-        disk_size=disk_size,
-        total_bytes=0,
-        total_files=0,
-        total_directories=0,
-        uncompressed=UncompressedStats.zero(),
-    )
-
-    # Subsequent entries in a dir list is its direct children
-    for child in tree[1:]:
-        if isinstance(child, dict):
-            node.children.append(parse_file_entry(child, parent=node))
-            continue
-        if is_dir_tree(child):
-            node.children.append(parse_dir_tree(child, parent=node))
-
-    # Since these are computed recursively already, this pass here only need to
-    # touch the top level subdirectories, and so will be fast
-    node.total_bytes = disk_size + sum(child.total_bytes for child in node.children)
-    node.total_files = sum(c.total_files if isinstance(c, NcduDir) else 1 for c in node.children)
-    node.total_directories = 1 + sum(
-        c.total_directories for c in node.children if isinstance(c, NcduDir)
-    )
-    agg = UncompressedStats.zero()
-    for child in node.children:
-        agg.fasta += child.uncompressed.fasta
-        agg.fastq += child.uncompressed.fastq
-        agg.vcf += child.uncompressed.vcf
-        agg.sam += child.uncompressed.sam
-    node.uncompressed = agg
-    return node
-
-
-def parse_file_entry(entry: dict[str, Any], parent: NcduDir) -> NcduFile:
-    basename = get_required_name(entry)
-    disk_size = parse_disk_size(entry)
-    return NcduFile(
-        basename=basename,
-        parent=parent,
-        disk_size=disk_size,
-        uncompressed=UncompressedStats.from_file_node(basename, disk_size),
-    )
+    return root
 
 
 def parse_disk_size(entry: dict[str, Any]) -> int:

@@ -112,3 +112,39 @@ def test_parse_ncdu_json_file_rejects_invalid_shape(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="not a valid version 1 NCDU format file"):
         parse_ncdu_json_file(source)
+
+
+def test_parse_ncdu_json_file_empty_directory(tmp_path: Path) -> None:
+    root_tree = [{"name": "/", "dsize": 50}]
+
+    source = tmp_path / "snapshot.json"
+    write_ncdu_json(source, root_tree)
+    run = parse_ncdu_json_file(source)
+
+    assert run.root.disk_size == 50
+    assert run.root.total_bytes == 50
+    assert run.root.total_files == 0
+    assert run.root.total_directories == 1
+    assert run.root.children == []
+
+
+def test_parse_ncdu_json_file_directory_only_children(tmp_path: Path) -> None:
+    root_tree = [
+        {"name": "/", "dsize": 10},
+        [
+            {"name": "sub1", "dsize": 5},
+            [{"name": "sub1a", "dsize": 2}],
+        ],
+        [{"name": "sub2", "dsize": 7}],
+    ]
+
+    source = tmp_path / "snapshot.json"
+    write_ncdu_json(source, root_tree)
+    run = parse_ncdu_json_file(source)
+
+    root = run.root
+    assert root.total_files == 0
+    assert root.total_directories == 4
+    assert root.total_bytes == 24
+    assert len(root.children) == 2
+    assert all(isinstance(c, NcduDir) for c in root.children)
