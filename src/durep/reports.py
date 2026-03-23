@@ -30,9 +30,7 @@ def format_bytes(n: int) -> str:
     assert False
 
 
-def format_timestamp(ts: datetime | None) -> str:
-    if ts is None:
-        return "not available"
+def format_timestamp(ts: datetime) -> str:
     return ts.strftime("%Y-%m-%d %H:%M UTC")
 
 

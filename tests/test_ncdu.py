@@ -114,6 +114,14 @@ def test_parse_ncdu_json_file_rejects_invalid_shape(tmp_path: Path) -> None:
         parse_ncdu_json_file(source)
 
 
+def test_parse_ncdu_json_file_rejects_truncated_json(tmp_path: Path) -> None:
+    source = tmp_path / "snapshot.json"
+    source.write_text("[1]", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="not a valid version 1 NCDU format file"):
+        parse_ncdu_json_file(source)
+
+
 def test_parse_ncdu_json_file_empty_directory(tmp_path: Path) -> None:
     root_tree = [{"name": "/", "dsize": 50}]
 

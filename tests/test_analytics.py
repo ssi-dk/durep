@@ -304,12 +304,10 @@ def test_shrinkage_drilldown_returns_none_when_nothing_shrunk() -> None:
 
 
 def make_run(
-    root_name: str = "/data", dsize: int = 100, timestamp_epoch: int | None = 1700000000
+    root_name: str = "/data", dsize: int = 100, timestamp_epoch: int = 1700000000
 ) -> NcduRun:
     root = make_dir(root_name, None, lambda r: [make_file(r, "a.txt", dsize)])
-    ts = None
-    if timestamp_epoch is not None:
-        ts = datetime.datetime.fromtimestamp(timestamp_epoch, tz=datetime.timezone.utc)
+    ts = datetime.datetime.fromtimestamp(timestamp_epoch, tz=datetime.timezone.utc)
     return NcduRun(root=root, timestamp=ts)
 
 
@@ -322,15 +320,6 @@ def test_extract_project_sample_basic() -> None:
     assert sample.total_bytes == 500
     assert sample.total_files == 1
     assert sample.total_directories == 1
-
-
-def test_extract_project_sample_missing_timestamp() -> None:
-    run = make_run(timestamp_epoch=None)
-
-    import pytest
-
-    with pytest.raises(ValueError, match="no timestamp"):
-        extract_project_sample(run)
 
 
 def test_extract_project_sample_includes_uncompressed() -> None:

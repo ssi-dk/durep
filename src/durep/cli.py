@@ -161,21 +161,7 @@ def configure_logging(cli_value: str | None) -> None:
 
 
 def order_runs(run_a: NcduRun, run_b: NcduRun) -> tuple[NcduRun, NcduRun]:
-    """Return (current_run, previous_run) based on timestamps.
-
-    Raises ValueError if either run is missing a timestamp.
-    """
-    if run_a.timestamp is None or run_b.timestamp is None:
-        missing = []
-        if run_a.timestamp is None:
-            missing.append(str(path_str(run_a.root)))
-        if run_b.timestamp is None:
-            missing.append(str(path_str(run_b.root)))
-        raise ValueError(
-            "cannot determine scan order: missing timestamp in "
-            + ", ".join(missing)
-            + ". Both scans must contain a timestamp when comparing two files."
-        )
+    """Return (current_run, previous_run) based on timestamps."""
     if run_a.timestamp >= run_b.timestamp:
         return run_a, run_b
     return run_b, run_a
@@ -279,34 +265,22 @@ def run(argv: Sequence[str] | None = None) -> int:
     if namespace.subcommand is None:
         parser.error("a subcommand is required (detail, overview)")
     if namespace.subcommand == "detail":
-        args = DetailArgs.from_namespace(namespace)
-        args.validate()
-        execute_detail(args)
+        detail_args = DetailArgs.from_namespace(namespace)
+        detail_args.validate()
+        execute_detail(detail_args)
     elif namespace.subcommand == "overview":
-        args = OverviewArgs.from_namespace(namespace)
-        args.validate()
-        execute_overview(args)
+        overview_args = OverviewArgs.from_namespace(namespace)
+        overview_args.validate()
+        execute_overview(overview_args)
     return 0
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    parser = build_parser()
     try:
-        namespace = parser.parse_args(argv)
-        configure_logging(namespace.log_level)
-        if namespace.subcommand is None:
-            parser.error("a subcommand is required (detail, overview)")
-        if namespace.subcommand == "detail":
-            args = DetailArgs.from_namespace(namespace)
-            args.validate()
-            execute_detail(args)
-        elif namespace.subcommand == "overview":
-            args = OverviewArgs.from_namespace(namespace)
-            args.validate()
-            execute_overview(args)
+        run(argv)
         raise SystemExit(0)
     except (FileNotFoundError, FileExistsError, ValueError) as exc:
-        parser.exit(status=1, message=f"error: {exc}\n")
+        raise SystemExit(f"error: {exc}") from None
 
 
 if __name__ == "__main__":

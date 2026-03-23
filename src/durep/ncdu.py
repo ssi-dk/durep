@@ -121,7 +121,7 @@ def full_path(node: NcduEntry) -> Path:
 @dataclass(slots=True)
 class NcduRun:
     root: NcduDir
-    timestamp: datetime | None = None
+    timestamp: datetime
 
 
 Event = tuple[str, Any]
@@ -135,7 +135,7 @@ def parse_ncdu_json_file(path: Path, top_n: int | None = None) -> NcduRun:
         try:
             timestamp = parse_header(parser, error_prefix)
             root = parse_tree_streaming(parser, top_n=top_n)
-        except ijson.JSONError as exc:
+        except (ijson.JSONError, StopIteration) as exc:
             raise ValueError(
                 error_prefix + "NCDU JSON file is not a valid version 1 NCDU format file"
             ) from exc

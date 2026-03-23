@@ -111,22 +111,6 @@ def test_detail_rejects_three_scans(tmp_path: Path) -> None:
         )
 
 
-def test_detail_rejects_missing_timestamp_with_two_scans(tmp_path: Path) -> None:
-    scan_a = write_ncdu(tmp_path / "a.json", timestamp=1700000000)
-    # Write a scan without timestamp
-    no_ts = [
-        1,
-        2,
-        {"progname": "ncdu", "progver": "2.7"},
-        [{"name": "/data", "asize": 100, "dsize": 100}],
-    ]
-    scan_b = tmp_path / "b.json"
-    scan_b.write_text(json.dumps(no_ts), encoding="utf-8")
-
-    with pytest.raises(ValueError, match="timestamp"):
-        run(["detail", str(scan_a), str(scan_b), "--out-dir", str(tmp_path / "out")])
-
-
 # --- subcommand required ---
 
 

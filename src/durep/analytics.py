@@ -291,6 +291,21 @@ def _build_delta_node(
         if built is not None:
             child_results.append(built)
 
+    # Collapsed nodes won't match in deltas (their synthetic names differ between
+    # scans).  Compute the unexplained portion from the parent delta and attribute
+    # it to a single synthetic entry so the children fully explain the parent.
+    explained = sum(c.total_bytes for c in child_results)
+    unexplained = magnitude - explained
+    if unexplained > 0:
+        child_results.append(
+            DrilldownNode(
+                path=node_path / "(collapsed)",
+                node_type="file",
+                total_bytes=unexplained,
+                uncompressed=UncompressedStats.zero(),
+            )
+        )
+
     child_results.sort(key=lambda c: c.total_bytes, reverse=True)
     kept = child_results[:top_n]
     remainder = child_results[top_n:]
@@ -357,8 +372,6 @@ class ProjectTimeSeries:
 
 def extract_project_sample(run: NcduRun) -> ProjectSample:
     root_str = path_str(run.root)
-    if run.timestamp is None:
-        raise ValueError(f"scan for {root_str} has no timestamp; overview requires timestamps")
     # Extract last path component as project name
     name = root_str.rsplit("/", 1)[-1] or root_str
     return ProjectSample(
