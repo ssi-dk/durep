@@ -130,6 +130,48 @@ def test_parse_ncdu_json_file_rejects_truncated_json(tmp_path: Path) -> None:
         parse_ncdu_json_file(source)
 
 
+def test_parse_ncdu_json_file_preserves_json_syntax_error_details(tmp_path: Path) -> None:
+    source = tmp_path / "snapshot.json"
+    source.write_text(
+        '[1, 2, {"progname": "ncdu", "timestamp": 1700000000}, {"name": }]', encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match=r"Invalid NCDU JSON file at .*parse error:"):
+        parse_ncdu_json_file(source)
+
+
+def test_parse_ncdu_json_file_prefixes_schema_validation_errors_with_path(tmp_path: Path) -> None:
+    root_tree = [{"dsize": 1}]
+
+    source = tmp_path / "snapshot.json"
+    write_ncdu_json(source, root_tree)
+
+    with pytest.raises(
+        ValueError,
+        match=r"Invalid NCDU JSON file at .*Each ncdu entry must include a non-empty string 'name'",
+    ):
+        parse_ncdu_json_file(source)
+
+
+def test_parse_ncdu_json_file_preserves_whitespace_only_and_trailing_space_names(
+    tmp_path: Path,
+) -> None:
+    root_tree = [
+        {"name": "/", "dsize": 0},
+        {"name": " ", "dsize": 1},
+        {"name": "a ", "dsize": 2},
+        {"name": "a  ", "dsize": 3},
+    ]
+
+    source = tmp_path / "snapshot.json"
+    write_ncdu_json(source, root_tree)
+    run = parse_ncdu_json_file(source)
+
+    children = run.root.children
+    assert [child.basename for child in children] == [" ", "a ", "a  "]
+    assert [full_path(child) for child in children] == [Path("/ "), Path("/a "), Path("/a  ")]
+
+
 def test_parse_ncdu_json_file_empty_directory(tmp_path: Path) -> None:
     root_tree = [{"name": "/", "dsize": 50}]
 

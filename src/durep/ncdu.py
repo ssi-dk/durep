@@ -156,10 +156,16 @@ def parse_ncdu_file(path: Path, parse_body: Callable[..., Any], *parse_args: Any
             parser: Iterator[Event] = ijson.basic_parse(handle)
             timestamp = parse_header(parser, error_prefix)
             return parse_body(parser, timestamp, *parse_args)
-        except (ijson.JSONError, StopIteration) as exc:
+        except ijson.JSONError as exc:
+            raise ValueError(error_prefix + str(exc)) from exc
+        except StopIteration as exc:
             raise ValueError(
                 error_prefix + "NCDU JSON file is not a valid version 1 NCDU format file"
             ) from exc
+        except ValueError as exc:
+            if str(exc).startswith(error_prefix):
+                raise
+            raise ValueError(error_prefix + str(exc)) from exc
 
 
 def parse_tree_to_run(parser: Iterator[Event], timestamp: datetime, top_n: int | None) -> NcduRun:
@@ -425,7 +431,7 @@ def parse_disk_size(entry: dict[str, Any]) -> int:
 
 def get_required_name(entry: dict[str, Any]) -> str:
     raw_name = entry.get("name")
-    if not isinstance(raw_name, str) or raw_name.strip() == "":
+    if not isinstance(raw_name, str) or raw_name == "":
         raise ValueError("Each ncdu entry must include a non-empty string 'name'")
     return raw_name
 
