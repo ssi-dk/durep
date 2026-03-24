@@ -83,6 +83,8 @@ def render_text_report(
             lines.append(f"  SAM:   {format_bytes(u.sam)}")
         if u.vcf:
             lines.append(f"  VCF:   {format_bytes(u.vcf)}")
+        if u.other:
+            lines.append(f"  Other: {format_bytes(u.other)}")
         lines.append("")
 
     # Top N directories by direct file size (excludes subdirectory contributions)

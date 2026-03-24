@@ -348,6 +348,22 @@ def test_parse_with_top_n_preserves_uncompressed_stats(tmp_path: Path) -> None:
     assert root.uncompressed.sam == 50
 
 
+def test_parse_counts_other_uncompressed_formats(tmp_path: Path) -> None:
+    root_tree = [
+        {"name": "/", "dsize": 0},
+        {"name": "genes.tsv", "dsize": 120},
+        {"name": "regions.bed", "dsize": 80},
+        {"name": "notes.txt", "dsize": 40},
+    ]
+
+    source = tmp_path / "snapshot.json"
+    write_ncdu_json(source, root_tree)
+    run = parse_ncdu_json_file(source, top_n=10)
+
+    assert run.root.uncompressed.other == 200
+    assert run.root.uncompressed.total_size == 200
+
+
 def test_parse_with_top_n_keeps_directories_and_only_collapses_files(tmp_path: Path) -> None:
     root_tree = [
         {"name": "/", "dsize": 0},

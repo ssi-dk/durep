@@ -17,6 +17,7 @@ EXTENSIONS = {
     "fastq": ["fastq", "fq"],
     "sam": ["sam"],
     "vcf": ["vcf"],
+    "other": ["tsv", "csv", "bed", "gff", "paf", "gfa"],
 }
 
 # Reverse lookup: extension string -> format name
@@ -32,14 +33,22 @@ class UncompressedStats:
     fastq: int
     vcf: int
     sam: int
+    other: int
 
     @property
     def total_size(self) -> int:
-        return self.fasta + self.fastq + self.vcf + self.sam
+        return self.fasta + self.fastq + self.vcf + self.sam + self.other
+
+    def add_to_self(self, other: UncompressedStats):
+        self.fasta += other.fasta
+        self.fastq += other.fastq
+        self.vcf += other.vcf
+        self.sam += other.sam
+        self.other += other.other
 
     @classmethod
     def zero(cls) -> UncompressedStats:
-        return cls(0, 0, 0, 0)
+        return cls(0, 0, 0, 0, 0)
 
     @classmethod
     def from_file_node(cls, basename: str, disk_size: int) -> UncompressedStats:
@@ -47,15 +56,17 @@ class UncompressedStats:
         ext = basename[dot + 1 :] if dot >= 0 else ""
         fmt = EXTENSION_TO_FORMAT.get(ext)
         if fmt is None:
-            return UncompressedStats(0, 0, 0, 0)
+            return UncompressedStats(0, 0, 0, 0, 0)
         if fmt == "fasta":
-            return UncompressedStats(disk_size, 0, 0, 0)
+            return UncompressedStats(disk_size, 0, 0, 0, 0)
         elif fmt == "fastq":
-            return UncompressedStats(0, disk_size, 0, 0)
+            return UncompressedStats(0, disk_size, 0, 0, 0)
         elif fmt == "vcf":
-            return UncompressedStats(0, 0, disk_size, 0)
+            return UncompressedStats(0, 0, disk_size, 0, 0)
         elif fmt == "sam":
-            return UncompressedStats(0, 0, 0, disk_size)
+            return UncompressedStats(0, 0, 0, disk_size, 0)
+        elif fmt == "other":
+            return UncompressedStats(0, 0, 0, 0, disk_size)
         else:
             assert False  # unreachable
 
@@ -219,10 +230,7 @@ def parse_tree_to_project_sample(parser: Iterator[Event], timestamp: datetime) -
                 file_uncompressed = UncompressedStats.from_file_node(basename, disk_size)
                 total_bytes += disk_size
                 total_files += 1
-                uncompressed.fasta += file_uncompressed.fasta
-                uncompressed.fastq += file_uncompressed.fastq
-                uncompressed.vcf += file_uncompressed.vcf
-                uncompressed.sam += file_uncompressed.sam
+                uncompressed.add_to_self(file_uncompressed)
 
         elif event == "end_array":
             if directory_depth > 0:
@@ -314,10 +322,7 @@ def collapse_children(directory: NcduDir, top_n: int) -> None:
     for c in to_collapse:
         total_disk += c.disk_size
         total_bytes += c.total_bytes
-        agg.fasta += c.uncompressed.fasta
-        agg.fastq += c.uncompressed.fastq
-        agg.vcf += c.uncompressed.vcf
-        agg.sam += c.uncompressed.sam
+        agg.add_to_self(c.uncompressed)
 
     collapsed = CollapsedNode(
         basename=f"({len(to_collapse)} collapsed entries)",
@@ -444,10 +449,7 @@ def parse_tree_streaming(parser: Iterator[Event], top_n: int = 20) -> NcduDir:
                 # Incrementally update parent aggregates
                 parent_dir.total_bytes += disk_size
                 parent_dir.total_files += 1
-                parent_dir.uncompressed.fasta += uncompressed.fasta
-                parent_dir.uncompressed.fastq += uncompressed.fastq
-                parent_dir.uncompressed.vcf += uncompressed.vcf
-                parent_dir.uncompressed.sam += uncompressed.sam
+                parent_dir.uncompressed.add_to_self(uncompressed)
 
         elif event == "end_array":
             # End of directory. All children have been parsed. We can remove from stack,
@@ -461,10 +463,7 @@ def parse_tree_streaming(parser: Iterator[Event], top_n: int = 20) -> NcduDir:
                     parent.total_bytes += finished.total_bytes
                     parent.total_files += finished.total_files
                     parent.total_directories += finished.total_directories
-                    parent.uncompressed.fasta += finished.uncompressed.fasta
-                    parent.uncompressed.fastq += finished.uncompressed.fastq
-                    parent.uncompressed.vcf += finished.uncompressed.vcf
-                    parent.uncompressed.sam += finished.uncompressed.sam
+                    parent.uncompressed.add_to_self(finished.uncompressed)
                 else:
                     root = finished
 

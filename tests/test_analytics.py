@@ -110,7 +110,7 @@ def test_uncompressed_stats_accumulates_bioinformatics_formats() -> None:
 def test_uncompressed_stats_are_zero_for_non_bio_files() -> None:
     root = make_dir("/plain", None, lambda r: [make_file(r, "notes.txt", 999)])
 
-    assert root.uncompressed == UncompressedStats(0, 0, 0, 0)
+    assert root.uncompressed == UncompressedStats(0, 0, 0, 0, 0)
 
 
 def test_uncompressed_stats_ignore_compressed_bio_files() -> None:

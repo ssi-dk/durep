@@ -150,10 +150,7 @@ def _build_drilldown(
         other_bytes = sum(c.total_bytes for c in remainder)
         other_stats = UncompressedStats.zero()
         for c in remainder:
-            other_stats.fasta += c.uncompressed.fasta
-            other_stats.fastq += c.uncompressed.fastq
-            other_stats.sam += c.uncompressed.sam
-            other_stats.vcf += c.uncompressed.vcf
+            other_stats.add_to_self(c.uncompressed)
         children.append(
             DrilldownNode(
                 path=node_path / f"Other ({len(remainder)} items)",
@@ -432,4 +429,5 @@ def interpolate_uncompressed(
         fastq=round(a.fastq + t * (b.fastq - a.fastq)),
         vcf=round(a.vcf + t * (b.vcf - a.vcf)),
         sam=round(a.sam + t * (b.sam - a.sam)),
+        other=round(a.other + t * (b.other - a.other)),
     )
