@@ -98,6 +98,7 @@ NcduEntry = NcduDir | NcduFile | CollapsedNode
 
 
 def path_str(node: NcduEntry) -> str:
+    "Get absolute path of node by traverse up the tree"
     parts: list[str] = []
     current: NcduEntry = node
     while True:
@@ -131,19 +132,7 @@ class NcduRun:
 Event = tuple[str, Any]
 
 
-@dataclass(slots=True)
-class DirAggregate:
-    basename: str
-    disk_size: int
-    total_bytes: int
-    total_files: int
-    total_directories: int
-    uncompressed: UncompressedStats
-
-
-def parse_ncdu_json_file(
-    path: Path, top_n: int | None = None, display_nodes: int | None = None
-) -> NcduRun:
+def parse_ncdu_json_file(path: Path, top_n: int = 20, display_nodes: int = 5000) -> NcduRun:
     return parse_ncdu_file(path, parse_tree_to_run, top_n, display_nodes)
 
 
@@ -172,23 +161,82 @@ def parse_ncdu_file(path: Path, parse_body: Callable[..., Any], *parse_args: Any
 
 
 def parse_tree_to_run(
-    parser: Iterator[Event], timestamp: datetime, top_n: int | None, display_nodes: int | None
+    parser: Iterator[Event], timestamp: datetime, top_n: int, display_nodes: int
 ) -> NcduRun:
+    "Only store top_n largest direct files in each directory, collapse the rest"
+
     root = parse_tree_streaming(parser, top_n=top_n)
     if root.parent is None and not Path(root.basename).is_absolute():
         raise ValueError(f"Root node path must be absolute, got: {root.basename}")
-    if display_nodes is not None:
-        apply_node_budget(root, display_nodes)
+    apply_node_budget(root, display_nodes)
     return NcduRun(root=root, timestamp=timestamp)
 
 
 def parse_tree_to_project_sample(parser: Iterator[Event], timestamp: datetime) -> "ProjectSample":
     from durep.analytics import ProjectSample
 
-    root = parse_tree_aggregate_streaming(parser)
-    root_path = Path(root.basename)
+    awaiting_dir_metadata = False
+    current_map: dict[str, Any] = {}
+    in_map = False
+    map_key = ""
+    directory_depth = 0
+
+    root_basename: str | None = None
+    total_bytes = 0
+    total_files = 0
+    total_directories = 0
+    uncompressed = UncompressedStats.zero()
+
+    for event, value in parser:
+        if event == "start_array":
+            awaiting_dir_metadata = True
+            directory_depth += 1
+
+        elif event == "start_map":
+            in_map = True
+            current_map.clear()
+
+        elif event == "map_key":
+            map_key = value
+
+        elif event == "end_map":
+            in_map = False
+            if awaiting_dir_metadata:
+                awaiting_dir_metadata = False
+                basename = get_required_name(current_map)
+                disk_size = parse_disk_size(current_map)
+                if root_basename is None:
+                    root_basename = basename
+                total_bytes += disk_size
+                total_directories += 1
+            else:
+                if directory_depth <= 0:
+                    raise ValueError(
+                        "Fourth field (root directory) is not a valid directory in NCDU format"
+                    )
+                basename = get_required_name(current_map)
+                disk_size = parse_disk_size(current_map)
+                file_uncompressed = UncompressedStats.from_file_node(basename, disk_size)
+                total_bytes += disk_size
+                total_files += 1
+                uncompressed.fasta += file_uncompressed.fasta
+                uncompressed.fastq += file_uncompressed.fastq
+                uncompressed.vcf += file_uncompressed.vcf
+                uncompressed.sam += file_uncompressed.sam
+
+        elif event == "end_array":
+            if directory_depth > 0:
+                directory_depth -= 1
+
+        elif in_map:
+            current_map[map_key] = value
+
+    if root_basename is None or directory_depth != 0:
+        raise ValueError("Fourth field (root directory) is not a valid directory in NCDU format")
+
+    root_path = Path(root_basename)
     if not root_path.is_absolute():
-        raise ValueError(f"Root node path must be absolute, got: {root.basename}")
+        raise ValueError(f"Root node path must be absolute, got: {root_basename}")
 
     root_str = str(root_path)
     project = root_str.rsplit("/", 1)[-1] or root_str
@@ -196,10 +244,10 @@ def parse_tree_to_project_sample(parser: Iterator[Event], timestamp: datetime) -
         project=project,
         timestamp=timestamp,
         date=timestamp.date(),
-        total_bytes=root.total_bytes,
-        total_files=root.total_files,
-        total_directories=root.total_directories,
-        uncompressed=root.uncompressed,
+        total_bytes=total_bytes,
+        total_files=total_files,
+        total_directories=total_directories,
+        uncompressed=uncompressed,
     )
 
 
@@ -244,39 +292,44 @@ def parse_header(parser: Iterator[Event], error_prefix: str) -> datetime:
 
 
 def collapse_children(directory: NcduDir, top_n: int) -> None:
-    if len(directory.children) <= top_n:
+    files: list[NcduFile] = []
+    for child in directory.children:
+        if isinstance(child, NcduDir):
+            continue
+        elif isinstance(child, CollapsedNode):
+            assert False  # should never appear here
+        elif isinstance(child, NcduFile):
+            files.append(child)
+
+    if len(files) <= top_n:
         return
-    directory.children.sort(key=lambda c: c.total_bytes, reverse=True)
-    kept = directory.children[:top_n]
-    remainder = directory.children[top_n:]
+
+    files.sort(key=lambda child: child.total_bytes, reverse=True)
+    to_collapse = files[top_n:]
+    to_collapse_ids = {id(child) for child in to_collapse}
 
     total_disk = 0
     total_bytes = 0
-    count = 0
     agg = UncompressedStats.zero()
-    for c in remainder:
+    for c in to_collapse:
         total_disk += c.disk_size
         total_bytes += c.total_bytes
         agg.fasta += c.uncompressed.fasta
         agg.fastq += c.uncompressed.fastq
         agg.vcf += c.uncompressed.vcf
         agg.sam += c.uncompressed.sam
-        if isinstance(c, CollapsedNode):
-            count += c.count
-        elif isinstance(c, NcduDir):
-            count += c.total_files + c.total_directories
-        else:
-            count += 1
 
     collapsed = CollapsedNode(
-        basename=f"({count} collapsed entries)",
+        basename=f"({len(to_collapse)} collapsed entries)",
         parent=directory,
-        count=count,
+        count=len(to_collapse),
         disk_size=total_disk,
         total_bytes=total_bytes,
         uncompressed=agg,
     )
-    directory.children = kept + [collapsed]
+
+    directory.children = [child for child in directory.children if id(child) not in to_collapse_ids]
+    directory.children.append(collapsed)
 
 
 def apply_node_budget(root: NcduDir, budget: int) -> None:
@@ -309,33 +362,32 @@ def apply_node_budget(root: NcduDir, budget: int) -> None:
                     counter += 1
 
     # Phase 2 — collapse every directory that was *not* expanded.
-    _collapse_unexpanded(root, expanded)
-
-
-def _collapse_unexpanded(node: NcduDir, expanded: set[int]) -> None:
-    new_children: list[NcduEntry] = []
-    for child in node.children:
-        if isinstance(child, NcduDir):
-            if id(child) in expanded:
-                _collapse_unexpanded(child, expanded)
-                new_children.append(child)
-            else:
-                new_children.append(
-                    CollapsedNode(
-                        basename=child.basename,
-                        parent=node,
-                        count=child.total_files + child.total_directories,
-                        disk_size=child.total_bytes,
-                        total_bytes=child.total_bytes,
-                        uncompressed=child.uncompressed,
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        new_children: list[NcduEntry] = []
+        for child in node.children:
+            if isinstance(child, NcduDir):
+                if id(child) in expanded:
+                    stack.append(child)
+                    new_children.append(child)
+                else:
+                    new_children.append(
+                        CollapsedNode(
+                            basename=child.basename,
+                            parent=node,
+                            count=child.total_files + child.total_directories,
+                            disk_size=child.total_bytes,
+                            total_bytes=child.total_bytes,
+                            uncompressed=child.uncompressed,
+                        )
                     )
-                )
-        else:
-            new_children.append(child)
-    node.children = new_children
+            else:
+                new_children.append(child)
+        node.children = new_children
 
 
-def parse_tree_streaming(parser: Iterator[Event], top_n: int | None = None) -> NcduDir:
+def parse_tree_streaming(parser: Iterator[Event], top_n: int = 20) -> NcduDir:
     dir_stack: list[NcduDir] = []
     awaiting_dir_metadata = False
     current_map: dict[str, Any] = {}
@@ -344,19 +396,23 @@ def parse_tree_streaming(parser: Iterator[Event], top_n: int | None = None) -> N
     root: NcduDir | None = None
 
     for event, value in parser:
+        # Directories are [dir_element, elements...], so the boolean here means the next map
+        # contain directory metadata
         if event == "start_array":
             awaiting_dir_metadata = True
 
         elif event == "start_map":
             in_map = True
-            current_map = {}
+            current_map.clear()
 
         elif event == "map_key":
             map_key = value
 
         elif event == "end_map":
+            # End of directory metadata or file
             in_map = False
             if awaiting_dir_metadata:
+                # If end of directory metadata, make the directory and push to stack
                 awaiting_dir_metadata = False
                 parent = dir_stack[-1] if dir_stack else None
                 basename = get_required_name(current_map)
@@ -372,6 +428,7 @@ def parse_tree_streaming(parser: Iterator[Event], top_n: int | None = None) -> N
                 )
                 dir_stack.append(node)
             else:
+                # Else, it must be a file. Make a file and append to parent dir
                 parent_dir = dir_stack[-1]
                 basename = get_required_name(current_map)
                 disk_size = parse_disk_size(current_map)
@@ -393,83 +450,14 @@ def parse_tree_streaming(parser: Iterator[Event], top_n: int | None = None) -> N
                 parent_dir.uncompressed.sam += uncompressed.sam
 
         elif event == "end_array":
+            # End of directory. All children have been parsed. We can remove from stack,
+            # and collapse children
             if dir_stack:
                 finished = dir_stack.pop()
-                if top_n is not None:
-                    collapse_children(finished, top_n)
+                collapse_children(finished, top_n)
                 if dir_stack:
                     parent = dir_stack[-1]
                     parent.children.append(finished)
-                    parent.total_bytes += finished.total_bytes
-                    parent.total_files += finished.total_files
-                    parent.total_directories += finished.total_directories
-                    parent.uncompressed.fasta += finished.uncompressed.fasta
-                    parent.uncompressed.fastq += finished.uncompressed.fastq
-                    parent.uncompressed.vcf += finished.uncompressed.vcf
-                    parent.uncompressed.sam += finished.uncompressed.sam
-                else:
-                    root = finished
-
-        elif in_map:
-            current_map[map_key] = value
-
-    if root is None:
-        raise ValueError("Fourth field (root directory) is not a valid directory in NCDU format")
-    return root
-
-
-def parse_tree_aggregate_streaming(parser: Iterator[Event]) -> DirAggregate:
-    dir_stack: list[DirAggregate] = []
-    awaiting_dir_metadata = False
-    current_map: dict[str, Any] = {}
-    in_map = False
-    map_key = ""
-    root: DirAggregate | None = None
-
-    for event, value in parser:
-        if event == "start_array":
-            awaiting_dir_metadata = True
-
-        elif event == "start_map":
-            in_map = True
-            current_map = {}
-
-        elif event == "map_key":
-            map_key = value
-
-        elif event == "end_map":
-            in_map = False
-            if awaiting_dir_metadata:
-                awaiting_dir_metadata = False
-                disk_size = parse_disk_size(current_map)
-                dir_stack.append(
-                    DirAggregate(
-                        basename=get_required_name(current_map),
-                        disk_size=disk_size,
-                        total_bytes=disk_size,
-                        total_files=0,
-                        total_directories=1,
-                        uncompressed=UncompressedStats.zero(),
-                    )
-                )
-            else:
-                parent = dir_stack[-1]
-                disk_size = parse_disk_size(current_map)
-                uncompressed = UncompressedStats.from_file_node(
-                    get_required_name(current_map), disk_size
-                )
-                parent.total_bytes += disk_size
-                parent.total_files += 1
-                parent.uncompressed.fasta += uncompressed.fasta
-                parent.uncompressed.fastq += uncompressed.fastq
-                parent.uncompressed.vcf += uncompressed.vcf
-                parent.uncompressed.sam += uncompressed.sam
-
-        elif event == "end_array":
-            if dir_stack:
-                finished = dir_stack.pop()
-                if dir_stack:
-                    parent = dir_stack[-1]
                     parent.total_bytes += finished.total_bytes
                     parent.total_files += finished.total_files
                     parent.total_directories += finished.total_directories

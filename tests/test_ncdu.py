@@ -306,7 +306,7 @@ def test_parse_with_top_n_collapses_excess_children(tmp_path: Path) -> None:
     assert root.total_files == 5
 
 
-def test_parse_with_top_n_none_does_not_collapse(tmp_path: Path) -> None:
+def test_parse_with_large_top_n_does_not_collapse(tmp_path: Path) -> None:
     root_tree = [
         {"name": "/", "dsize": 0},
         {"name": "a.bin", "dsize": 10},
@@ -316,7 +316,7 @@ def test_parse_with_top_n_none_does_not_collapse(tmp_path: Path) -> None:
 
     source = tmp_path / "snapshot.json"
     write_ncdu_json(source, root_tree)
-    run = parse_ncdu_json_file(source, top_n=None)
+    run = parse_ncdu_json_file(source, top_n=10)
 
     assert len(run.root.children) == 3
     assert all(isinstance(c, NcduFile) for c in run.root.children)
@@ -346,6 +346,34 @@ def test_parse_with_top_n_preserves_uncompressed_stats(tmp_path: Path) -> None:
     assert root.uncompressed.fastq == 500
     assert root.uncompressed.fasta == 100
     assert root.uncompressed.sam == 50
+
+
+def test_parse_with_top_n_keeps_directories_and_only_collapses_files(tmp_path: Path) -> None:
+    root_tree = [
+        {"name": "/", "dsize": 0},
+        {"name": "big.bin", "dsize": 500},
+        {"name": "small.bin", "dsize": 100},
+        [
+            {"name": "subdir", "dsize": 5},
+            {"name": "nested.bin", "dsize": 20},
+        ],
+    ]
+
+    source = tmp_path / "snapshot.json"
+    write_ncdu_json(source, root_tree)
+    run = parse_ncdu_json_file(source, top_n=1)
+
+    root = run.root
+    assert len(root.children) == 3
+    assert isinstance(root.children[0], NcduFile)
+    assert root.children[0].basename == "big.bin"
+    assert isinstance(root.children[1], NcduDir)
+    assert root.children[1].basename == "subdir"
+
+    collapsed = root.children[2]
+    assert isinstance(collapsed, CollapsedNode)
+    assert collapsed.count == 1
+    assert collapsed.total_bytes == 100
 
 
 # --- apply_node_budget ---

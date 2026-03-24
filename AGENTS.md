@@ -1,6 +1,9 @@
 # NCDU report
 This Python application reads NCDU JSON files and produces a text summary and an interactive HTML
-report with D3 sunburst diagrams of disk usage. Optionally compares two scans to show growth/shrinkage.
+report of disk usage.
+Two subcommands produce different HTML reports:
+* `detail`: Produce detailed sunburst diagram of a single project's usage at one time, or at two times (latest disk plus delta)
+* `overview`: Show stacked area diagrams of overall usage of many projects at several time points.
 
 ## Architecture
 - `src/durep/ncdu.py` — NCDU JSON parser, produces `NcduNode` tree and `NcduRun` (with timestamp)

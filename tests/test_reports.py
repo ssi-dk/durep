@@ -80,6 +80,22 @@ def test_d3_previous_bytes_matches_when_unchanged() -> None:
     check_all_deltas_zero(d3)
 
 
+def test_d3_includes_compressible_ratio_for_directories() -> None:
+    root = make_dir(
+        "/data",
+        None,
+        lambda r: [
+            make_file(r, "reads.fastq", 400),
+            make_dir("nested", r, lambda s: [make_file(s, "other.bin", 600)]),
+        ],
+    )
+
+    drilldown = build_drilldown_tree(root, top_n=25)
+    d3 = drilldown_to_d3(drilldown)
+
+    assert d3["compressibleRatio"] == 0.4
+
+
 def test_render_overview_text_report_caps_extreme_growth_percentage() -> None:
     samples = [
         make_sample("/proj", datetime.date(2024, 1, 1), 1),

@@ -106,8 +106,8 @@ def build_parser() -> argparse.ArgumentParser:
     detail.add_argument(
         "--top-n",
         type=positive_int,
-        default=25,
-        help="Maximum number of children to keep per expanded node (default: 25).",
+        default=20,
+        help="Maximum number of children to keep per expanded node (default: 20).",
     )
     detail.add_argument(
         "--display-nodes",
