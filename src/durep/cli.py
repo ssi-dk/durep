@@ -16,6 +16,7 @@ from durep.analytics import (
     compute_directory_deltas,
     compute_global_metrics,
 )
+from durep.metadata import ProjectName, load_project_owners, resolve_project_owners
 from durep.ncdu import NcduRun, parse_ncdu_json_file, parse_ncdu_project_sample, path_str
 from durep.reports import (
     render_html_report,
@@ -55,6 +56,7 @@ class OverviewArgs:
     scans: list[Path]
     out_dir: Path
     jobs: int | None
+    metadata_csv: Path
 
     @classmethod
     def from_namespace(cls, namespace: argparse.Namespace) -> OverviewArgs:
@@ -62,11 +64,13 @@ class OverviewArgs:
             scans=[Path(p) for p in namespace.scan],
             out_dir=Path(namespace.out_dir),
             jobs=namespace.jobs,
+            metadata_csv=Path(namespace.metadata_csv_path),
         )
 
     def validate(self) -> None:
         if self.jobs is not None and self.jobs < 1:
             raise ValueError("jobs must be an integer > 0")
+        require_file(self.metadata_csv, "--metadata-csv-path")
         for scan in self.scans:
             require_file(scan, str(scan))
 
@@ -135,6 +139,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     overview.add_argument(
         "--out-dir", required=True, help="Output directory for generated reports."
+    )
+    overview.add_argument(
+        "--metadata-csv-path",
+        required=True,
+        help="CSV file with DisplayName and LegalOwner columns for project ownership.",
     )
 
     return parser
@@ -284,12 +293,15 @@ def execute_overview(args: OverviewArgs) -> None:
 
     series = build_overview_series(samples)
 
-    text = render_overview_text_report(series, samples)
+    csv_owners = load_project_owners(args.metadata_csv)
+    owners = resolve_project_owners([ProjectName(s.project) for s in series], csv_owners)
+
+    text = render_overview_text_report(series, samples, owners)
     text_path = out_dir / "text_report.txt"
     text_path.write_text(text, encoding="utf-8")
     log.info("Wrote text report: %s", text_path)
 
-    html = render_overview_html_report(series, text, samples)
+    html = render_overview_html_report(series, text, samples, owners)
     html_path = out_dir / "overview.html"
     html_path.write_text(html, encoding="utf-8")
     log.info("Wrote HTML report: %s", html_path)

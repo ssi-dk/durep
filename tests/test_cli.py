@@ -32,6 +32,16 @@ def write_ncdu(
     return path
 
 
+def write_metadata_csv(tmp_path: Path, projects: list[str]) -> Path:
+    """Write a metadata CSV with each project as its own owner."""
+    csv_path = tmp_path / "metadata.csv"
+    lines = ["DisplayName,LegalOwner"]
+    for p in projects:
+        lines.append(f"{p},{p}")
+    csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return csv_path
+
+
 def normalize_generated(text: str) -> str:
     return "\n".join(line for line in text.splitlines() if not line.startswith("Generated:"))
 
@@ -128,9 +138,19 @@ def test_run_requires_subcommand(tmp_path: Path) -> None:
 
 def test_overview_single_scan(tmp_path: Path) -> None:
     scan = write_ncdu(tmp_path / "scan.json")
+    meta = write_metadata_csv(tmp_path, ["data"])
     out_dir = tmp_path / "out"
 
-    exit_code = run(["overview", str(scan), "--out-dir", str(out_dir)])
+    exit_code = run(
+        [
+            "overview",
+            str(scan),
+            "--out-dir",
+            str(out_dir),
+            "--metadata-csv-path",
+            str(meta),
+        ]
+    )
 
     assert exit_code == 0
     assert (out_dir / "text_report.txt").is_file()
@@ -141,9 +161,21 @@ def test_overview_multiple_scans(tmp_path: Path) -> None:
     scan_a = write_ncdu(tmp_path / "a.json", timestamp=1700000000, root_name="/proj_a", dsize=500)
     scan_b = write_ncdu(tmp_path / "b.json", timestamp=1700086400, root_name="/proj_b", dsize=300)
     scan_c = write_ncdu(tmp_path / "c.json", timestamp=1700172800, root_name="/proj_a", dsize=600)
+    meta = write_metadata_csv(tmp_path, ["proj_a", "proj_b"])
     out_dir = tmp_path / "out"
 
-    exit_code = run(["overview", str(scan_a), str(scan_b), str(scan_c), "--out-dir", str(out_dir)])
+    exit_code = run(
+        [
+            "overview",
+            str(scan_a),
+            str(scan_b),
+            str(scan_c),
+            "--out-dir",
+            str(out_dir),
+            "--metadata-csv-path",
+            str(meta),
+        ]
+    )
 
     assert exit_code == 0
     text = (out_dir / "text_report.txt").read_text(encoding="utf-8")
@@ -155,6 +187,7 @@ def test_overview_multiple_scans_with_jobs_2(tmp_path: Path) -> None:
     scan_a = write_ncdu(tmp_path / "a.json", timestamp=1700000000, root_name="/proj_a", dsize=500)
     scan_b = write_ncdu(tmp_path / "b.json", timestamp=1700086400, root_name="/proj_b", dsize=300)
     scan_c = write_ncdu(tmp_path / "c.json", timestamp=1700172800, root_name="/proj_a", dsize=600)
+    meta = write_metadata_csv(tmp_path, ["proj_a", "proj_b"])
     out_dir = tmp_path / "out"
 
     exit_code = run(
@@ -167,6 +200,8 @@ def test_overview_multiple_scans_with_jobs_2(tmp_path: Path) -> None:
             "2",
             "--out-dir",
             str(out_dir),
+            "--metadata-csv-path",
+            str(meta),
         ]
     )
 
@@ -179,6 +214,7 @@ def test_overview_jobs_1_matches_jobs_2_output(tmp_path: Path) -> None:
     scan_a = write_ncdu(tmp_path / "a.json", timestamp=1700000000, root_name="/proj_a", dsize=500)
     scan_b = write_ncdu(tmp_path / "b.json", timestamp=1700086400, root_name="/proj_b", dsize=300)
     scan_c = write_ncdu(tmp_path / "c.json", timestamp=1700172800, root_name="/proj_a", dsize=600)
+    meta = write_metadata_csv(tmp_path, ["proj_a", "proj_b"])
 
     out_serial = tmp_path / "out_serial"
     run(
@@ -191,6 +227,8 @@ def test_overview_jobs_1_matches_jobs_2_output(tmp_path: Path) -> None:
             "1",
             "--out-dir",
             str(out_serial),
+            "--metadata-csv-path",
+            str(meta),
         ]
     )
 
@@ -205,6 +243,8 @@ def test_overview_jobs_1_matches_jobs_2_output(tmp_path: Path) -> None:
             "2",
             "--out-dir",
             str(out_parallel),
+            "--metadata-csv-path",
+            str(meta),
         ]
     )
 
@@ -218,22 +258,54 @@ def test_overview_jobs_1_matches_jobs_2_output(tmp_path: Path) -> None:
 
 
 def test_overview_rejects_missing_file(tmp_path: Path) -> None:
+    meta = write_metadata_csv(tmp_path, [])
     with pytest.raises(FileNotFoundError):
-        run(["overview", str(tmp_path / "missing.json"), "--out-dir", str(tmp_path / "out")])
+        run(
+            [
+                "overview",
+                str(tmp_path / "missing.json"),
+                "--out-dir",
+                str(tmp_path / "out"),
+                "--metadata-csv-path",
+                str(meta),
+            ]
+        )
 
 
 def test_overview_rejects_jobs_zero(tmp_path: Path) -> None:
     scan = write_ncdu(tmp_path / "scan.json")
 
     with pytest.raises(SystemExit):
-        run(["overview", str(scan), "--jobs", "0", "--out-dir", str(tmp_path / "out")])
+        run(
+            [
+                "overview",
+                str(scan),
+                "--jobs",
+                "0",
+                "--out-dir",
+                str(tmp_path / "out"),
+                "--metadata-csv-path",
+                str(tmp_path / "meta.csv"),
+            ]
+        )
 
 
 def test_overview_rejects_negative_jobs(tmp_path: Path) -> None:
     scan = write_ncdu(tmp_path / "scan.json")
 
     with pytest.raises(SystemExit):
-        run(["overview", str(scan), "--jobs", "-1", "--out-dir", str(tmp_path / "out")])
+        run(
+            [
+                "overview",
+                str(scan),
+                "--jobs",
+                "-1",
+                "--out-dir",
+                str(tmp_path / "out"),
+                "--metadata-csv-path",
+                str(tmp_path / "meta.csv"),
+            ]
+        )
 
 
 def test_overview_rejects_missing_timestamp(tmp_path: Path) -> None:
@@ -245,9 +317,19 @@ def test_overview_rejects_missing_timestamp(tmp_path: Path) -> None:
     ]
     scan = tmp_path / "no_ts.json"
     scan.write_text(json.dumps(no_ts), encoding="utf-8")
+    meta = write_metadata_csv(tmp_path, ["data"])
 
     with pytest.raises(ValueError, match="timestamp"):
-        run(["overview", str(scan), "--out-dir", str(tmp_path / "out")])
+        run(
+            [
+                "overview",
+                str(scan),
+                "--out-dir",
+                str(tmp_path / "out"),
+                "--metadata-csv-path",
+                str(meta),
+            ]
+        )
 
 
 def test_overview_parallel_preserves_parse_error_details(tmp_path: Path) -> None:
@@ -256,9 +338,54 @@ def test_overview_parallel_preserves_parse_error_details(tmp_path: Path) -> None
     bad.write_text(
         '[1, 2, {"progname": "ncdu", "timestamp": 1700000000}, {"name": }]', encoding="utf-8"
     )
+    meta = write_metadata_csv(tmp_path, ["data"])
 
     with pytest.raises(ValueError, match=r"Invalid NCDU JSON file at .*parse error:"):
-        run(["overview", str(good), str(bad), "--jobs", "2", "--out-dir", str(tmp_path / "out")])
+        run(
+            [
+                "overview",
+                str(good),
+                str(bad),
+                "--jobs",
+                "2",
+                "--out-dir",
+                str(tmp_path / "out"),
+                "--metadata-csv-path",
+                str(meta),
+            ]
+        )
+
+
+def test_overview_rejects_missing_metadata_csv(tmp_path: Path) -> None:
+    scan = write_ncdu(tmp_path / "scan.json")
+    with pytest.raises(FileNotFoundError):
+        run(
+            [
+                "overview",
+                str(scan),
+                "--out-dir",
+                str(tmp_path / "out"),
+                "--metadata-csv-path",
+                str(tmp_path / "nonexistent.csv"),
+            ]
+        )
+
+
+def test_overview_rejects_bad_metadata_csv_columns(tmp_path: Path) -> None:
+    scan = write_ncdu(tmp_path / "scan.json")
+    bad_csv = tmp_path / "bad.csv"
+    bad_csv.write_text("Name,Owner\nproj,Alice\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="missing required column"):
+        run(
+            [
+                "overview",
+                str(scan),
+                "--out-dir",
+                str(tmp_path / "out"),
+                "--metadata-csv-path",
+                str(bad_csv),
+            ]
+        )
 
 
 def test_effective_overview_jobs_caps_auto_workers_at_8(monkeypatch: pytest.MonkeyPatch) -> None:

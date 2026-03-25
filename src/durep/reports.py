@@ -12,6 +12,7 @@ from durep.analytics import (
     ProjectSample,
     ProjectTimeSeries,
 )
+from durep.metadata import Owner, ProjectName
 from durep.ncdu import NcduDir, NcduRun, path_str
 
 
@@ -25,7 +26,14 @@ def format_bytes(n: int) -> str:
     for si_prefix in "KMGTPE":
         m /= 1024
         if m < 1024:
-            return f"{sign}{m:.4g} {si_prefix}B"
+            # Always show 4 significant digits with trailing zeros.
+            if m >= 100:
+                decimals = 1
+            elif m >= 10:
+                decimals = 2
+            else:
+                decimals = 3
+            return f"{sign}{m:.{decimals}f} {si_prefix}B"
 
     assert False
 
@@ -526,7 +534,8 @@ function formatBytes(n) {
   const units = ["KB", "MB", "GB", "TB", "PB"];
   let u = -1;
   do { n /= 1024; u++; } while (n >= 1024 && u < units.length - 1);
-  return n.toFixed(1) + " " + units[u];
+  const d = n >= 100 ? 1 : n >= 10 ? 2 : 3;
+  return n.toFixed(d) + " " + units[u];
 }
 
 function formatDelta(d) {
@@ -653,6 +662,7 @@ def render_html_report(
 def render_overview_text_report(
     series: list[ProjectTimeSeries],
     samples: list[ProjectSample],
+    owners: dict[ProjectName, Owner],
 ) -> str:
     lines: list[str] = []
     lines.append("Disk usage overview")
@@ -663,9 +673,11 @@ def render_overview_text_report(
         lines.append("No data.")
         return "\n".join(lines)
 
-    # Build a table: one row per project, latest size, earliest size, growth, compressible
-    rows: list[tuple[str, int, int, int, str, int]] = []
+    # Build a table: one row per project
+    rows: list[tuple[str, str, int, int, int, str, int]] = []
     for ts in series:
+        owner = owners.get(ProjectName(ts.project), Owner(ts.project))
+
         # Find earliest and latest non-zero values
         earliest = 0
         latest = ts.bytes_values[-1] if ts.bytes_values else 0
@@ -679,20 +691,22 @@ def render_overview_text_report(
 
         compressible = ts.uncompressed_values[-1].total_size if ts.uncompressed_values else 0
 
-        rows.append((ts.project, latest, earliest, growth, pct, compressible))
+        rows.append((ts.project, owner, latest, earliest, growth, pct, compressible))
 
-    # Sort by latest size descending
-    rows.sort(key=lambda r: r[1], reverse=True)
+    # Sort by owner, then by latest size descending within owner
+    rows.sort(key=lambda r: (r[1], -r[2]))
 
     # Table header
     lines.append(
-        f"  {'Project':<40s}  {'Latest':>12s}  {'Earliest':>12s}"
+        f"  {'Project':<40s}  {'Owner':<15s}  {'Latest':>12s}  {'Earliest':>12s}"
         f"  {'Growth':>12s}  {'%':>8s}  {'Compressible':>14s}"
     )
-    for project, latest, earliest, growth, pct, compressible in rows:
+    for project, owner, latest, earliest, growth, pct, compressible in rows:
         proj_display = project if len(project) <= 40 else "..." + project[-(40 - 3) :]
+        owner_display = owner if len(owner) <= 15 else "..." + owner[-(15 - 3) :]
         lines.append(
-            f"  {proj_display:<40s}  {format_bytes(latest):>12s}  {format_bytes(earliest):>12s}"
+            f"  {proj_display:<40s}  {owner_display:<15s}"
+            f"  {format_bytes(latest):>12s}  {format_bytes(earliest):>12s}"
             f"  {format_bytes(growth):>12s}  {pct:>8s}  {format_bytes(compressible):>14s}"
         )
     lines.append("")
@@ -907,35 +921,89 @@ function renderStackedArea(containerId, legendId, seriesData, formatBytes) {
     tooltip.style("display", "none");
   }
 
-  const legendItems = legendContainer.selectAll(".legend-item")
-    .data(sortedProjects)
-    .join("button")
-    .attr("type", "button")
-    .attr("class", "legend-item")
-    .on("click", function(event, project) {
-      event.preventDefault();
-      if (hidden.has(project)) {
-        hidden.delete(project);
-      } else {
-        hidden.add(project);
-      }
-      syncLegend();
-      redraw();
+  // Group projects by owner
+  const owners = seriesData.owners || {};
+  const ownerOrder = [];
+  const ownerGroups = new Map();
+  sortedProjects.forEach(p => {
+    const owner = owners[p] || p;
+    if (!ownerGroups.has(owner)) {
+      ownerGroups.set(owner, []);
+      ownerOrder.push(owner);
+    }
+    ownerGroups.get(owner).push(p);
+  });
+
+  // Render grouped legend
+  ownerOrder.forEach(owner => {
+    const groupProjects = ownerGroups.get(owner);
+    const group = legendContainer.append("div").attr("class", "owner-group");
+
+    group.append("button")
+      .attr("type", "button")
+      .attr("class", "owner-header")
+      .text(owner)
+      .on("click", function(event) {
+        event.preventDefault();
+        const allHidden = groupProjects.every(p => hidden.has(p));
+        groupProjects.forEach(p => {
+          if (allHidden) hidden.delete(p); else hidden.add(p);
+        });
+        syncLegend();
+        redraw();
+      });
+
+    const projectsDiv = group.append("div").attr("class", "owner-projects");
+
+    groupProjects.forEach(project => {
+      const btn = projectsDiv.append("button")
+        .attr("type", "button")
+        .attr("class", "legend-item")
+        .datum(project)
+        .on("click", function(event) {
+          event.preventDefault();
+          if (hidden.has(project)) hidden.delete(project);
+          else hidden.add(project);
+          syncLegend();
+          redraw();
+        });
+
+      btn.append("span")
+        .attr("class", "legend-swatch")
+        .style("background-color", color(project));
+
+      btn.append("span")
+        .attr("class", "legend-label")
+        .text(project);
     });
-
-  legendItems.append("span")
-    .attr("class", "legend-swatch")
-    .style("background-color", project => color(project));
-
-  legendItems.append("span")
-    .attr("class", "legend-label")
-    .text(project => project);
+  });
 
   function syncLegend() {
-    legendItems.classed("is-hidden", project => hidden.has(project));
+    legendContainer.selectAll(".legend-item")
+      .classed("is-hidden", function() { return hidden.has(d3.select(this).datum()); });
+    legendContainer.selectAll(".owner-group").each(function() {
+      const grp = d3.select(this);
+      const items = grp.selectAll(".legend-item");
+      const allHidden = items.filter(function() {
+        return !hidden.has(d3.select(this).datum());
+      }).empty();
+      grp.select(".owner-header").classed("is-hidden", allHidden);
+    });
   }
 
   syncLegend();
+
+  d3.select("#legend-select-all").on("click", function() {
+    hidden.clear();
+    syncLegend();
+    redraw();
+  });
+
+  d3.select("#legend-deselect-all").on("click", function() {
+    sortedProjects.forEach(p => hidden.add(p));
+    syncLegend();
+    redraw();
+  });
 }
 """
 
@@ -956,6 +1024,7 @@ def render_overview_html_report(
     series: list[ProjectTimeSeries],
     text_report: str,
     samples: list[ProjectSample],
+    owners: dict[ProjectName, Owner],
 ) -> str:
     if not series:
         dates: list[str] = []
@@ -998,6 +1067,9 @@ def render_overview_html_report(
             "latestBytes": per_project_latest,
             "earliestBytes": per_project_earliest,
             "compressible": per_project_compressible,
+            "owners": {
+                s.project: owners.get(ProjectName(s.project), Owner(s.project)) for s in series
+            },
         }
     )
 
@@ -1018,7 +1090,15 @@ def render_overview_html_report(
     .overview-layout {{ display: flex; gap: 1.5em; align-items: flex-start; flex-wrap: wrap; }}
     .overview-plot {{ flex: 1 1 900px; min-width: 0; }}
     .overview-legend {{ flex: 0 0 240px; max-height: 400px; overflow-y: auto; padding-right: 0.25em; }}
-    .overview-legend h3 {{ margin: 0 0 0.75em; font-size: 1em; }}
+    .overview-legend h3 {{ margin: 0; font-size: 1em; }}
+    .legend-header {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75em; }}
+    .legend-actions {{ display: flex; gap: 0.3em; }}
+    .legend-action-btn {{
+      border: 1px solid #ccc; background: #f5f5f5; border-radius: 4px;
+      padding: 0.15em 0.5em; font: inherit; font-size: 0.8em; color: #555;
+      cursor: pointer;
+    }}
+    .legend-action-btn:hover {{ background: #e0e0e0; }}
     .legend-item {{
       display: flex; align-items: center; gap: 0.6em; width: 100%;
       padding: 0.3em 0.4em; border: 0; background: transparent; text-align: left;
@@ -1029,6 +1109,16 @@ def render_overview_html_report(
     .legend-swatch {{ width: 14px; height: 14px; border-radius: 2px; flex: 0 0 14px; }}
     .legend-item.is-hidden .legend-swatch {{ opacity: 0.2; }}
     .legend-label {{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+    .owner-group {{ margin-bottom: 0.5em; }}
+    .owner-header {{
+      display: flex; align-items: center; gap: 0.5em; width: 100%;
+      padding: 0.3em 0.4em; border: 0; background: #e8e8e8;
+      cursor: pointer; border-radius: 6px; font: inherit; font-weight: bold;
+      font-size: 0.9em; color: #444;
+    }}
+    .owner-header:hover {{ background: #ddd; }}
+    .owner-header.is-hidden {{ color: #999; text-decoration: line-through; background: transparent; }}
+    .owner-projects {{ padding-left: 0.5em; }}
     h1 {{ margin-bottom: 0.3em; }}
     h2 {{ margin-top: 2em; }}
     pre {{ background: #f5f5f5; padding: 1.5em; border-radius: 8px; overflow-x: auto;
@@ -1065,7 +1155,13 @@ def render_overview_html_report(
       <div id="overview-chart"></div>
     </div>
     <aside class="overview-legend">
-      <h3>Projects</h3>
+      <div class="legend-header">
+        <h3>Projects</h3>
+        <span class="legend-actions">
+          <button type="button" id="legend-select-all" class="legend-action-btn">all</button>
+          <button type="button" id="legend-deselect-all" class="legend-action-btn">none</button>
+        </span>
+      </div>
       <div id="overview-legend"></div>
     </aside>
   </div>
@@ -1080,7 +1176,8 @@ function formatBytes(n) {{
   const units = ["KB", "MB", "GB", "TB", "PB"];
   let u = -1;
   do {{ n /= 1024; u++; }} while (n >= 1024 && u < units.length - 1);
-  return n.toFixed(1) + " " + units[u];
+  const d = n >= 100 ? 1 : n >= 10 ? 2 : 3;
+  return n.toFixed(d) + " " + units[u];
 }}
   const chartData = {chart_data};
   renderStackedArea('overview-chart', 'overview-legend', chartData, formatBytes);
