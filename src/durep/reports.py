@@ -779,7 +779,23 @@ function renderStackedArea(containerId, legendId, seriesData, formatBytes) {
   // Hidden project tracking and redraw
   const hidden = new Set();
 
+  function updateStats() {
+    let totalSize = 0, totalGrowth = 0, totalFiles = 0, totalCompressible = 0;
+    projects.forEach((p, j) => {
+      if (hidden.has(p)) return;
+      totalSize += seriesData.latestBytes[j];
+      totalGrowth += seriesData.latestBytes[j] - seriesData.earliestBytes[j];
+      totalFiles += seriesData.files[j];
+      totalCompressible += seriesData.compressible[j];
+    });
+    document.getElementById("stat-size").textContent = formatBytes(totalSize);
+    document.getElementById("stat-growth").textContent = formatBytes(totalGrowth);
+    document.getElementById("stat-files").textContent = totalFiles.toLocaleString();
+    document.getElementById("stat-compressible").textContent = formatBytes(totalCompressible);
+  }
+
   function redraw() {
+    updateStats();
     const visibleKeys = sortedProjects.filter(p => !hidden.has(p));
 
     const tableData = dates.map((d, i) => {
@@ -953,20 +969,24 @@ def render_overview_html_report(
         values = [[s.bytes_values[i] for i in indices] for s in series]
         measured = [[s.measured[i] for i in indices] for s in series]
 
-    # Summary card values
-    total_projects = len(series)
-    total_files = sum(s.total_files for s in samples)
-    total_latest = sum(s.bytes_values[-1] for s in series if s.bytes_values)
-    total_earliest = 0
+    # Per-project stats for dynamic summary cards
+    latest_files: dict[str, int] = {}
+    for sample in sorted(samples, key=lambda s: s.timestamp):
+        latest_files[sample.project] = sample.total_files
+
+    per_project_files = [latest_files.get(s.project, 0) for s in series]
+    per_project_latest = [s.bytes_values[-1] if s.bytes_values else 0 for s in series]
+    per_project_earliest: list[int] = []
     for s in series:
+        earliest = 0
         for v in s.bytes_values:
             if v > 0:
-                total_earliest += v
+                earliest = v
                 break
-    total_growth = total_latest - total_earliest
-    total_compressible = sum(
-        s.uncompressed_values[-1].total_size for s in series if s.uncompressed_values
-    )
+        per_project_earliest.append(earliest)
+    per_project_compressible = [
+        s.uncompressed_values[-1].total_size if s.uncompressed_values else 0 for s in series
+    ]
 
     chart_data = json.dumps(
         {
@@ -974,6 +994,10 @@ def render_overview_html_report(
             "projects": projects,
             "values": values,
             "measured": measured,
+            "files": per_project_files,
+            "latestBytes": per_project_latest,
+            "earliestBytes": per_project_earliest,
+            "compressible": per_project_compressible,
         }
     )
 
@@ -1018,24 +1042,20 @@ def render_overview_html_report(
 
   <div class="cards">
     <div class="card">
-      <div class="label">Projects</div>
-      <div class="value">{total_projects}</div>
-    </div>
-    <div class="card">
-      <div class="label">Total files</div>
-      <div class="value">{total_files}</div>
-    </div>
-    <div class="card">
-      <div class="label">Total size (latest)</div>
-      <div class="value">{html.escape(format_bytes(total_latest))}</div>
+      <div class="label">Total size</div>
+      <div class="value" id="stat-size"></div>
     </div>
     <div class="card">
       <div class="label">Total growth</div>
-      <div class="value">{html.escape(format_bytes(total_growth))}</div>
+      <div class="value" id="stat-growth"></div>
+    </div>
+    <div class="card">
+      <div class="label">Total files</div>
+      <div class="value" id="stat-files"></div>
     </div>
     <div class="card">
       <div class="label">Compressible files</div>
-      <div class="value">{html.escape(format_bytes(total_compressible))}</div>
+      <div class="value" id="stat-compressible"></div>
     </div>
   </div>
 

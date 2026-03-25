@@ -160,7 +160,7 @@ def test_render_overview_html_report_shows_total_files_card() -> None:
     )
 
     assert "Total files" in html
-    assert ">7<" in html
+    assert '"files": [3, 4]' in html
 
 
 def test_render_overview_html_report_includes_project_history_tooltip_logic() -> None:
