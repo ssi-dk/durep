@@ -191,23 +191,38 @@ def effective_overview_jobs(requested_jobs: int | None, n_scans: int) -> int:
     return min(n_scans, os.cpu_count() or 1, 8)
 
 
+def estimate_overview_scan_cost(scan_path: Path) -> int:
+    try:
+        return scan_path.stat().st_size
+    except OSError:
+        log.warning("Could not stat overview scan for scheduling: %s", scan_path)
+        return 0
+
+
+def schedule_overview_scans(scans: list[Path]) -> list[Path]:
+    """Schedule larger overview scans first to reduce worker tail latency."""
+    return sorted(scans, key=estimate_overview_scan_cost, reverse=True)
+
+
 def load_overview_samples(scans: list[Path], jobs: int) -> list[ProjectSample]:
-    for scan_path in scans:
+    scheduled_scans = schedule_overview_scans(scans)
+
+    for scan_path in scheduled_scans:
         log.info("Queueing overview scan: %s", scan_path)
 
     if jobs <= 1:
-        return [load_overview_sample(scan_path) for scan_path in scans]
+        return [load_overview_sample(scan_path) for scan_path in scheduled_scans]
 
     log.info("Loading overview samples with %d worker processes", jobs)
     try:
         with ProcessPoolExecutor(max_workers=jobs) as executor:
             try:
-                return list(executor.map(load_overview_sample, scans))
+                return list(executor.map(load_overview_sample, scheduled_scans))
             except ValueError as exc:
                 raise ValueError(str(exc)) from None
     except (NotImplementedError, PermissionError):
         log.warning("Process pool unavailable; falling back to serial overview parsing")
-        return [load_overview_sample(scan_path) for scan_path in scans]
+        return [load_overview_sample(scan_path) for scan_path in scheduled_scans]
 
 
 def order_runs(run_a: NcduRun, run_b: NcduRun) -> tuple[NcduRun, NcduRun]:
@@ -263,7 +278,7 @@ def execute_detail(args: DetailArgs) -> None:
         log.info("Computed deltas for %d paths", len(deltas))
 
     text = render_text_report(current_run, previous_run, metrics, deltas, args.top_n)
-    text_path = out_dir / "text_report.txt"
+    text_path = out_dir / "report.txt"
     text_path.write_text(text, encoding="utf-8")
     log.info("Wrote text report: %s", text_path)
 
@@ -276,7 +291,7 @@ def execute_detail(args: DetailArgs) -> None:
         growth_drilldown = build_growth_drilldown(current_run.root, deltas, args.top_n)
 
     html = render_html_report(current_run, previous_run, drilldown, metrics, growth_drilldown, text)
-    html_path = out_dir / "overall.html"
+    html_path = out_dir / "report.html"
     html_path.write_text(html, encoding="utf-8")
     log.info("Wrote HTML report: %s", html_path)
 
@@ -297,12 +312,12 @@ def execute_overview(args: OverviewArgs) -> None:
     owners = resolve_project_owners([ProjectName(s.project) for s in series], csv_owners)
 
     text = render_overview_text_report(series, samples, owners)
-    text_path = out_dir / "text_report.txt"
+    text_path = out_dir / "report.txt"
     text_path.write_text(text, encoding="utf-8")
     log.info("Wrote text report: %s", text_path)
 
     html = render_overview_html_report(series, text, samples, owners)
-    html_path = out_dir / "overview.html"
+    html_path = out_dir / "report.html"
     html_path.write_text(html, encoding="utf-8")
     log.info("Wrote HTML report: %s", html_path)
 

@@ -64,8 +64,8 @@ def test_detail_creates_output_files(tmp_path: Path) -> None:
 
     run(["detail", str(scan), "--out-dir", str(out_dir)])
 
-    assert (out_dir / "text_report.txt").is_file()
-    assert (out_dir / "overall.html").is_file()
+    assert (out_dir / "report.txt").is_file()
+    assert (out_dir / "report.html").is_file()
 
 
 def test_detail_with_two_scans_creates_output_files(tmp_path: Path) -> None:
@@ -75,8 +75,8 @@ def test_detail_with_two_scans_creates_output_files(tmp_path: Path) -> None:
 
     run(["detail", str(scan_a), str(scan_b), "--out-dir", str(out_dir)])
 
-    assert (out_dir / "text_report.txt").is_file()
-    assert (out_dir / "overall.html").is_file()
+    assert (out_dir / "report.txt").is_file()
+    assert (out_dir / "report.html").is_file()
 
 
 def test_detail_with_two_scans_order_independent(tmp_path: Path) -> None:
@@ -85,11 +85,11 @@ def test_detail_with_two_scans_order_independent(tmp_path: Path) -> None:
 
     out_a = tmp_path / "out_a"
     run(["detail", str(scan_old), str(scan_new), "--out-dir", str(out_a)])
-    report_a = (out_a / "overall.html").read_text(encoding="utf-8")
+    report_a = (out_a / "report.html").read_text(encoding="utf-8")
 
     out_b = tmp_path / "out_b"
     run(["detail", str(scan_new), str(scan_old), "--out-dir", str(out_b)])
-    report_b = (out_b / "overall.html").read_text(encoding="utf-8")
+    report_b = (out_b / "report.html").read_text(encoding="utf-8")
 
     assert report_a == report_b
 
@@ -153,8 +153,8 @@ def test_overview_single_scan(tmp_path: Path) -> None:
     )
 
     assert exit_code == 0
-    assert (out_dir / "text_report.txt").is_file()
-    assert (out_dir / "overview.html").is_file()
+    assert (out_dir / "report.txt").is_file()
+    assert (out_dir / "report.html").is_file()
 
 
 def test_overview_multiple_scans(tmp_path: Path) -> None:
@@ -178,7 +178,7 @@ def test_overview_multiple_scans(tmp_path: Path) -> None:
     )
 
     assert exit_code == 0
-    text = (out_dir / "text_report.txt").read_text(encoding="utf-8")
+    text = (out_dir / "report.txt").read_text(encoding="utf-8")
     assert "proj_a" in text
     assert "proj_b" in text
 
@@ -206,8 +206,8 @@ def test_overview_multiple_scans_with_jobs_2(tmp_path: Path) -> None:
     )
 
     assert exit_code == 0
-    assert (out_dir / "text_report.txt").is_file()
-    assert (out_dir / "overview.html").is_file()
+    assert (out_dir / "report.txt").is_file()
+    assert (out_dir / "report.html").is_file()
 
 
 def test_overview_jobs_1_matches_jobs_2_output(tmp_path: Path) -> None:
@@ -248,12 +248,12 @@ def test_overview_jobs_1_matches_jobs_2_output(tmp_path: Path) -> None:
         ]
     )
 
-    serial_text = (out_serial / "text_report.txt").read_text(encoding="utf-8")
-    parallel_text = (out_parallel / "text_report.txt").read_text(encoding="utf-8")
+    serial_text = (out_serial / "report.txt").read_text(encoding="utf-8")
+    parallel_text = (out_parallel / "report.txt").read_text(encoding="utf-8")
     assert normalize_generated(serial_text) == normalize_generated(parallel_text)
 
-    serial_html = (out_serial / "overview.html").read_text(encoding="utf-8")
-    parallel_html = (out_parallel / "overview.html").read_text(encoding="utf-8")
+    serial_html = (out_serial / "report.html").read_text(encoding="utf-8")
+    parallel_html = (out_parallel / "report.html").read_text(encoding="utf-8")
     assert normalize_generated(serial_html) == normalize_generated(parallel_html)
 
 

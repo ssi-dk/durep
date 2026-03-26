@@ -28,7 +28,7 @@ ruff format .
 ```
 
 ## Verification
-Open the generated `overall.html` in a browser and verify:
+Open the generated `report.html` in a browser and verify:
 - Sunburst renders and is interactive (click to drill down, click center to go back)
 - Summary cards show correct totals
 - Text report is embedded at the bottom
