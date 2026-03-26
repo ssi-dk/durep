@@ -108,6 +108,18 @@ class CollapsedNode:
 NcduEntry = NcduDir | NcduFile | CollapsedNode
 
 
+@dataclass(slots=True)
+class OpenDirState:
+    node: NcduDir
+    next_child_order: int = 0
+    dir_children: list[tuple[int, NcduDir]] = field(default_factory=list)
+    kept_files: list[tuple[int, int, NcduFile]] = field(default_factory=list)
+    collapsed_count: int = 0
+    collapsed_disk_size: int = 0
+    collapsed_total_bytes: int = 0
+    collapsed_uncompressed: UncompressedStats = field(default_factory=UncompressedStats.zero)
+
+
 def path_str(node: NcduEntry) -> str:
     "Get absolute path of node by traverse up the tree"
     parts: list[str] = []
@@ -392,8 +404,86 @@ def apply_node_budget(root: NcduDir, budget: int) -> None:
         node.children = new_children
 
 
+def add_file_to_open_dir(
+    directory: OpenDirState, basename: str, disk_size: int, top_n: int
+) -> None:
+    file_uncompressed = UncompressedStats.from_file_node(basename, disk_size)
+    order = directory.next_child_order
+    directory.next_child_order += 1
+
+    directory.node.total_bytes += disk_size
+    directory.node.total_files += 1
+    directory.node.uncompressed.add_to_self(file_uncompressed)
+
+    if len(directory.kept_files) < top_n:
+        heapq.heappush(
+            directory.kept_files,
+            (
+                disk_size,
+                order,
+                NcduFile(
+                    basename=basename,
+                    parent=directory.node,
+                    disk_size=disk_size,
+                    uncompressed=file_uncompressed,
+                ),
+            ),
+        )
+        return
+
+    smallest_bytes, _smallest_order, _smallest_file = directory.kept_files[0]
+    if disk_size > smallest_bytes:
+        _bytes, _order, evicted = heapq.heapreplace(
+            directory.kept_files,
+            (
+                disk_size,
+                order,
+                NcduFile(
+                    basename=basename,
+                    parent=directory.node,
+                    disk_size=disk_size,
+                    uncompressed=file_uncompressed,
+                ),
+            ),
+        )
+        aggregate_collapsed_stats(directory, evicted.disk_size, evicted.uncompressed)
+    else:
+        aggregate_collapsed_stats(directory, disk_size, file_uncompressed)
+
+
+def aggregate_collapsed_stats(
+    directory: OpenDirState, disk_size: int, uncompressed: UncompressedStats
+) -> None:
+    directory.collapsed_count += 1
+    directory.collapsed_disk_size += disk_size
+    directory.collapsed_total_bytes += disk_size
+    directory.collapsed_uncompressed.add_to_self(uncompressed)
+
+
+def finalize_open_dir(directory: OpenDirState) -> NcduDir:
+    children: list[tuple[int, NcduEntry]] = []
+    children.extend(directory.dir_children)
+    children.extend((order, file_node) for _bytes, order, file_node in directory.kept_files)
+    children.sort(key=lambda child: child[0])
+    directory.node.children = [child for _order, child in children]
+
+    if directory.collapsed_count > 0:
+        directory.node.children.append(
+            CollapsedNode(
+                basename=f"({directory.collapsed_count} collapsed entries)",
+                parent=directory.node,
+                count=directory.collapsed_count,
+                disk_size=directory.collapsed_disk_size,
+                total_bytes=directory.collapsed_total_bytes,
+                uncompressed=directory.collapsed_uncompressed,
+            )
+        )
+
+    return directory.node
+
+
 def parse_tree_streaming(parser: Iterator[Event], top_n: int = 20) -> NcduDir:
-    dir_stack: list[NcduDir] = []
+    dir_stack: list[OpenDirState] = []
     awaiting_dir_metadata = False
     current_map: dict[str, Any] = {}
     in_map = False
@@ -419,7 +509,7 @@ def parse_tree_streaming(parser: Iterator[Event], top_n: int = 20) -> NcduDir:
             if awaiting_dir_metadata:
                 # If end of directory metadata, make the directory and push to stack
                 awaiting_dir_metadata = False
-                parent = dir_stack[-1] if dir_stack else None
+                parent = dir_stack[-1].node if dir_stack else None
                 basename = get_required_name(current_map)
                 disk_size = parse_disk_size(current_map)
                 node = NcduDir(
@@ -431,39 +521,27 @@ def parse_tree_streaming(parser: Iterator[Event], top_n: int = 20) -> NcduDir:
                     total_directories=1,
                     uncompressed=UncompressedStats.zero(),
                 )
-                dir_stack.append(node)
+                dir_stack.append(OpenDirState(node=node))
             else:
                 # Else, it must be a file. Make a file and append to parent dir
-                parent_dir = dir_stack[-1]
                 basename = get_required_name(current_map)
                 disk_size = parse_disk_size(current_map)
-                uncompressed = UncompressedStats.from_file_node(basename, disk_size)
-                parent_dir.children.append(
-                    NcduFile(
-                        basename=basename,
-                        parent=parent_dir,
-                        disk_size=disk_size,
-                        uncompressed=uncompressed,
-                    )
-                )
-                # Incrementally update parent aggregates
-                parent_dir.total_bytes += disk_size
-                parent_dir.total_files += 1
-                parent_dir.uncompressed.add_to_self(uncompressed)
+                add_file_to_open_dir(dir_stack[-1], basename, disk_size, top_n)
 
         elif event == "end_array":
             # End of directory. All children have been parsed. We can remove from stack,
             # and collapse children
             if dir_stack:
-                finished = dir_stack.pop()
-                collapse_children(finished, top_n)
+                finished = finalize_open_dir(dir_stack.pop())
                 if dir_stack:
                     parent = dir_stack[-1]
-                    parent.children.append(finished)
-                    parent.total_bytes += finished.total_bytes
-                    parent.total_files += finished.total_files
-                    parent.total_directories += finished.total_directories
-                    parent.uncompressed.add_to_self(finished.uncompressed)
+                    order = parent.next_child_order
+                    parent.next_child_order += 1
+                    parent.dir_children.append((order, finished))
+                    parent.node.total_bytes += finished.total_bytes
+                    parent.node.total_files += finished.total_files
+                    parent.node.total_directories += finished.total_directories
+                    parent.node.uncompressed.add_to_self(finished.uncompressed)
                 else:
                     root = finished
 
