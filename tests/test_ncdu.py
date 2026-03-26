@@ -504,3 +504,111 @@ def test_apply_node_budget_skips_expensive_dir_expands_cheap_one() -> None:
     cheap_child = next(c for c in root.children if c.basename == "cheap")
     assert isinstance(expensive_child, CollapsedNode)
     assert isinstance(cheap_child, NcduDir)
+
+
+# --- inline directory collapsing ---
+
+
+def count_dirs(node: NcduDir) -> int:
+    """Count NcduDir nodes in the tree (including root)."""
+    count = 1
+    for child in node.children:
+        if isinstance(child, NcduDir):
+            count += count_dirs(child)
+    return count
+
+
+def test_inline_collapse_wide_tree_respects_dir_budget(tmp_path: Path) -> None:
+    """A wide tree with many sibling dirs should be collapsed to fit dir_budget."""
+    children: list[object] = [{"name": "/", "dsize": 0}]
+    num_dirs = 50
+    for i in range(num_dirs):
+        children.append([{"name": f"dir{i}", "dsize": 0}, {"name": f"f{i}.bin", "dsize": i + 1}])
+
+    source = tmp_path / "snapshot.json"
+    write_ncdu_json(source, children)
+    run = parse_ncdu_json_file(source, top_n=20, display_nodes=10)
+
+    # The number of NcduDir nodes should be within the budget
+    assert count_dirs(run.root) <= 10
+
+
+def test_inline_collapse_preserves_root_totals(tmp_path: Path) -> None:
+    """Root total_bytes and total_files must be preserved after inline collapsing."""
+    children: list[object] = [{"name": "/", "dsize": 100}]
+    for i in range(20):
+        children.append(
+            [{"name": f"d{i}", "dsize": 5}, {"name": f"f{i}.bin", "dsize": (i + 1) * 10}]
+        )
+
+    source = tmp_path / "snapshot.json"
+    write_ncdu_json(source, children)
+
+    # Parse with a large budget first to get reference totals
+    ref = parse_ncdu_json_file(source, top_n=100, display_nodes=100_000)
+    ref_bytes = ref.root.total_bytes
+    ref_files = ref.root.total_files
+
+    # Parse with small budget to trigger inline collapsing
+    run = parse_ncdu_json_file(source, top_n=100, display_nodes=5)
+
+    assert run.root.total_bytes == ref_bytes
+    assert run.root.total_files == ref_files
+
+
+def test_inline_collapse_collapsed_entries_have_correct_stats(tmp_path: Path) -> None:
+    """CollapsedNode replacements should have correct count and total_bytes."""
+    root_tree = [
+        {"name": "/", "dsize": 0},
+        [
+            {"name": "big", "dsize": 10},
+            {"name": "f1.bin", "dsize": 1000},
+        ],
+        [
+            {"name": "small", "dsize": 5},
+            {"name": "f2.bin", "dsize": 1},
+        ],
+    ]
+
+    source = tmp_path / "snapshot.json"
+    write_ncdu_json(source, root_tree)
+    # Budget of 1 dir means only root survives as NcduDir
+    run = parse_ncdu_json_file(source, top_n=20, display_nodes=1)
+
+    collapsed = [c for c in run.root.children if isinstance(c, CollapsedNode)]
+    assert len(collapsed) >= 1
+
+    # All collapsed nodes that replaced dirs should have count = total_files + total_dirs
+    for c in collapsed:
+        assert c.count > 0
+        assert c.total_bytes > 0
+
+
+def test_inline_collapse_large_budget_no_collapsing(tmp_path: Path) -> None:
+    """When budget exceeds tree size, no dirs should be collapsed."""
+    root_tree = [
+        {"name": "/", "dsize": 0},
+        [{"name": "a", "dsize": 1}, {"name": "f.bin", "dsize": 10}],
+        [{"name": "b", "dsize": 2}, {"name": "g.bin", "dsize": 20}],
+    ]
+
+    source = tmp_path / "snapshot.json"
+    write_ncdu_json(source, root_tree)
+    run = parse_ncdu_json_file(source, top_n=20, display_nodes=100_000)
+
+    # All dirs should remain as NcduDir
+    assert count_dirs(run.root) == 3
+
+
+def test_inline_collapse_root_is_never_collapsed(tmp_path: Path) -> None:
+    """Root must always remain an NcduDir, never collapsed."""
+    children: list[object] = [{"name": "/", "dsize": 0}]
+    for i in range(30):
+        children.append([{"name": f"d{i}", "dsize": 0}, {"name": f"f{i}.bin", "dsize": 1}])
+
+    source = tmp_path / "snapshot.json"
+    write_ncdu_json(source, children)
+    run = parse_ncdu_json_file(source, top_n=20, display_nodes=1)
+
+    assert isinstance(run.root, NcduDir)
+    assert run.root.basename == "/"

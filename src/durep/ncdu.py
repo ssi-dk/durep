@@ -116,10 +116,20 @@ NcduEntry = NcduDir | NcduFile | CollapsedNode
 
 @dataclass(slots=True)
 class OpenDirState:
+    """Mutable state for a directory whose children are still being parsed."""
+
     node: NcduDir
+    # Monotonic counter assigning each child a unique key. Used as the dict
+    # key in dir_children (enabling O(1) replacement during inline collapsing)
+    # and as a tiebreaker in the kept_files min-heap.
     next_child_order: int = 0
-    dir_children: list[tuple[int, NcduDir]] = field(default_factory=list)
+    # Finalized child directories, keyed by their order. A dict rather than a
+    # list so that collapse_dir_inline can replace an entry in O(1).
+    dir_children: dict[int, NcduEntry] = field(default_factory=dict)
+    # Min-heap of (disk_size, order, NcduFile) keeping the top_n largest files.
     kept_files: list[tuple[int, int, NcduFile]] = field(default_factory=list)
+    # Aggregate stats for files evicted from kept_files, materialized as a
+    # single CollapsedNode in finalize_open_dir.
     collapsed_count: int = 0
     collapsed_total_bytes: int = 0
     collapsed_uncompressed_bytes: int = 0
@@ -193,7 +203,7 @@ def parse_tree_to_run(
 ) -> NcduRun:
     "Only store top_n largest direct files in each directory, collapse the rest"
 
-    root = parse_tree_streaming(parser, top_n=top_n)
+    root = parse_tree_streaming(parser, top_n=top_n, dir_budget=display_nodes)
     if root.parent is None and not Path(root.basename).is_absolute():
         raise ValueError(f"Root node path must be absolute, got: {root.basename}")
     apply_node_budget(root, display_nodes)
@@ -458,12 +468,19 @@ def aggregate_collapsed_stats(
     directory.collapsed_uncompressed_bytes += uncompressed.total_size
 
 
-def finalize_open_dir(directory: OpenDirState) -> NcduDir:
+def finalize_open_dir(
+    directory: OpenDirState,
+    finalized_child_index: dict[int, int],
+) -> NcduDir:
     children: list[tuple[int, NcduEntry]] = []
-    children.extend(directory.dir_children)
+    children.extend(directory.dir_children.items())
     children.extend((order, file_node) for _bytes, order, file_node in directory.kept_files)
     children.sort(key=lambda child: child[0])
     directory.node.children = [child for _order, child in children]
+
+    for i, child in enumerate(directory.node.children):
+        if isinstance(child, NcduDir):
+            finalized_child_index[id(child)] = i
 
     if directory.collapsed_count > 0:
         directory.node.children.append(
@@ -479,13 +496,55 @@ def finalize_open_dir(directory: OpenDirState) -> NcduDir:
     return directory.node
 
 
-def parse_tree_streaming(parser: Iterator[Event], top_n: int = 20) -> NcduDir:
+def collapse_dir_inline(
+    node: NcduDir,
+    order_in_parent: int,
+    open_state_map: dict[int, OpenDirState],
+    finalized_child_index: dict[int, int],
+) -> None:
+    """Replace *node* with a CollapsedNode in its parent's children.
+
+    If the parent is still open (in *open_state_map*), does an O(1) dict
+    replacement.  Otherwise looks up the position via *finalized_child_index*.
+    """
+    assert node.parent is not None  # root is never collapsed
+
+    replacement = CollapsedNode(
+        basename=node.basename,
+        parent=node.parent,
+        count=node.total_files + node.total_directories,
+        total_bytes=node.total_bytes,
+        uncompressed_bytes=node.uncompressed.total_size,
+    )
+
+    parent_state = open_state_map.get(id(node.parent))
+    if parent_state is not None:
+        parent_state.dir_children[order_in_parent] = replacement
+    else:
+        idx = finalized_child_index.pop(id(node))
+        node.parent.children[idx] = replacement
+
+    node.children.clear()
+
+
+def parse_tree_streaming(
+    parser: Iterator[Event], top_n: int = 20, dir_budget: int = 5000
+) -> NcduDir:
     dir_stack: list[OpenDirState] = []
     awaiting_dir_metadata = False
     current_map: dict[str, Any] = {}
     in_map = False
+    is_heap = False
     map_key = ""
     root: NcduDir | None = None
+
+    # Inline directory collapsing state
+    dir_heap: list[
+        tuple[int, int, int, int, NcduDir]
+    ] = []  # (total_bytes, -depth, counter, order, node)
+    heap_counter = 0
+    open_state_map: dict[int, OpenDirState] = {}
+    finalized_child_index: dict[int, int] = {}  # id(dir) -> index in parent.children
 
     for event, value in parser:
         # Directories are [dir_element, elements...], so the boolean here means the next map
@@ -518,7 +577,9 @@ def parse_tree_streaming(parser: Iterator[Event], top_n: int = 20) -> NcduDir:
                     total_directories=1,
                     uncompressed=UncompressedStats.zero(),
                 )
-                dir_stack.append(OpenDirState(node=node))
+                state = OpenDirState(node=node)
+                dir_stack.append(state)
+                open_state_map[id(node)] = state
             else:
                 # Else, it must be a file. Make a file and append to parent dir
                 basename = get_required_name(current_map)
@@ -529,16 +590,35 @@ def parse_tree_streaming(parser: Iterator[Event], top_n: int = 20) -> NcduDir:
             # End of directory. All children have been parsed. We can remove from stack,
             # and collapse children
             if dir_stack:
-                finished = finalize_open_dir(dir_stack.pop())
+                popped_state = dir_stack.pop()
+                open_state_map.pop(id(popped_state.node), None)
+                finished = finalize_open_dir(popped_state, finalized_child_index)
                 if dir_stack:
                     parent = dir_stack[-1]
                     order = parent.next_child_order
                     parent.next_child_order += 1
-                    parent.dir_children.append((order, finished))
+                    parent.dir_children[order] = finished
                     parent.node.total_bytes += finished.total_bytes
                     parent.node.total_files += finished.total_files
                     parent.node.total_directories += finished.total_directories
                     parent.node.uncompressed.add_to_self(finished.uncompressed)
+
+                    # Push onto dir_heap for potential inline collapsing
+                    depth = len(dir_stack)  # depth after popping
+                    heap_element = (finished.total_bytes, -depth, heap_counter, order, finished)
+                    heap_counter += 1
+                    if is_heap:
+                        _bytes, _neg_depth, _cnt, victim_order, victim = heapq.heappushpop(
+                            dir_heap, heap_element
+                        )
+                        collapse_dir_inline(
+                            victim, victim_order, open_state_map, finalized_child_index
+                        )
+                    else:
+                        dir_heap.append(heap_element)
+                        if len(dir_heap) >= dir_budget:
+                            heapq.heapify(dir_heap)
+                            is_heap = True
                 else:
                     root = finished
 
