@@ -20,7 +20,6 @@ def make_file(parent: NcduDir, name: str, disk_size: int) -> NcduFile:
         basename=name,
         parent=parent,
         disk_size=disk_size,
-        uncompressed=UncompressedStats.from_file_node(name, disk_size),
     )
 
 

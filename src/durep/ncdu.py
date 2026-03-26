@@ -76,11 +76,14 @@ class NcduFile:
     basename: str
     parent: NcduDir
     disk_size: int
-    uncompressed: UncompressedStats
 
     @property
     def total_bytes(self) -> int:
         return self.disk_size
+
+    @property
+    def uncompressed(self) -> UncompressedStats:
+        return UncompressedStats.from_file_node(self.basename, self.disk_size)
 
 
 @dataclass(slots=True)
@@ -425,7 +428,6 @@ def add_file_to_open_dir(
                     basename=basename,
                     parent=directory.node,
                     disk_size=disk_size,
-                    uncompressed=file_uncompressed,
                 ),
             ),
         )
@@ -442,7 +444,6 @@ def add_file_to_open_dir(
                     basename=basename,
                     parent=directory.node,
                     disk_size=disk_size,
-                    uncompressed=file_uncompressed,
                 ),
             ),
         )

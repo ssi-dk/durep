@@ -429,7 +429,6 @@ def make_file_node(basename: str, disk_size: int) -> NcduFile:
         basename=basename,
         parent=None,  # type: ignore[arg-type]
         disk_size=disk_size,
-        uncompressed=UncompressedStats.zero(),
     )
 
 
