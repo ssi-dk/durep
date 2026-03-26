@@ -12,7 +12,7 @@ from durep.analytics import (
     compute_global_metrics,
     extract_project_sample,
 )
-from durep.ncdu import NcduDir, NcduFile, NcduRun, UncompressedStats
+from durep.ncdu import CollapsedNode, NcduDir, NcduFile, NcduRun, UncompressedStats
 
 
 def make_file(parent: NcduDir, name: str, disk_size: int) -> NcduFile:
@@ -52,10 +52,10 @@ def make_dir(
     )
     agg = UncompressedStats.zero()
     for child in node.children:
-        agg.fasta += child.uncompressed.fasta
-        agg.fastq += child.uncompressed.fastq
-        agg.vcf += child.uncompressed.vcf
-        agg.sam += child.uncompressed.sam
+        if isinstance(child, CollapsedNode):
+            agg.add_to_self(UncompressedStats.from_total_size(child.uncompressed_bytes))
+        else:
+            agg.add_to_self(child.uncompressed)
     node.uncompressed = agg
     return node
 

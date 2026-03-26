@@ -91,6 +91,12 @@ def _collect_all_nodes(root: NcduDir) -> dict[str, NcduEntry]:
     return result
 
 
+def node_uncompressed_stats(node: NcduEntry) -> UncompressedStats:
+    if isinstance(node, CollapsedNode):
+        return UncompressedStats.from_total_size(node.uncompressed_bytes)
+    return node.uncompressed
+
+
 def build_drilldown_tree(
     root: NcduDir,
     top_n: int,
@@ -136,7 +142,7 @@ def _build_drilldown(
             path=node_path,
             node_type="file",
             total_bytes=node.total_bytes,
-            uncompressed=node.uncompressed,
+            uncompressed=node_uncompressed_stats(node),
             previous_bytes=prev,
         )
 
@@ -150,7 +156,7 @@ def _build_drilldown(
         other_bytes = sum(c.total_bytes for c in remainder)
         other_stats = UncompressedStats.zero()
         for c in remainder:
-            other_stats.add_to_self(c.uncompressed)
+            other_stats.add_to_self(node_uncompressed_stats(c))
         children.append(
             DrilldownNode(
                 path=node_path / f"Other ({len(remainder)} items)",

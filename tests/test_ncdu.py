@@ -339,8 +339,7 @@ def test_parse_with_top_n_preserves_uncompressed_stats(tmp_path: Path) -> None:
 
     collapsed = root.children[1]
     assert isinstance(collapsed, CollapsedNode)
-    assert collapsed.uncompressed.fasta == 100
-    assert collapsed.uncompressed.sam == 50
+    assert collapsed.uncompressed_bytes == 150
 
     # Root uncompressed totals still correct
     assert root.uncompressed.fastq == 500

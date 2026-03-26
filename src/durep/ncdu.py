@@ -51,6 +51,10 @@ class UncompressedStats:
         return cls(0, 0, 0, 0, 0)
 
     @classmethod
+    def from_total_size(cls, total_size: int) -> UncompressedStats:
+        return cls(0, 0, 0, 0, total_size)
+
+    @classmethod
     def from_file_node(cls, basename: str, disk_size: int) -> UncompressedStats:
         dot = basename.rfind(".")
         ext = basename[dot + 1 :] if dot >= 0 else ""
@@ -103,9 +107,8 @@ class CollapsedNode:
     basename: str
     parent: NcduDir
     count: int
-    disk_size: int
     total_bytes: int
-    uncompressed: UncompressedStats
+    uncompressed_bytes: int
 
 
 NcduEntry = NcduDir | NcduFile | CollapsedNode
@@ -118,9 +121,8 @@ class OpenDirState:
     dir_children: list[tuple[int, NcduDir]] = field(default_factory=list)
     kept_files: list[tuple[int, int, NcduFile]] = field(default_factory=list)
     collapsed_count: int = 0
-    collapsed_disk_size: int = 0
     collapsed_total_bytes: int = 0
-    collapsed_uncompressed: UncompressedStats = field(default_factory=UncompressedStats.zero)
+    collapsed_uncompressed_bytes: int = 0
 
 
 def path_str(node: NcduEntry) -> str:
@@ -331,21 +333,18 @@ def collapse_children(directory: NcduDir, top_n: int) -> None:
     to_collapse = files[top_n:]
     to_collapse_ids = {id(child) for child in to_collapse}
 
-    total_disk = 0
     total_bytes = 0
-    agg = UncompressedStats.zero()
+    uncompressed_bytes = 0
     for c in to_collapse:
-        total_disk += c.disk_size
         total_bytes += c.total_bytes
-        agg.add_to_self(c.uncompressed)
+        uncompressed_bytes += c.uncompressed.total_size
 
     collapsed = CollapsedNode(
         basename=f"({len(to_collapse)} collapsed entries)",
         parent=directory,
         count=len(to_collapse),
-        disk_size=total_disk,
         total_bytes=total_bytes,
-        uncompressed=agg,
+        uncompressed_bytes=uncompressed_bytes,
     )
 
     directory.children = [child for child in directory.children if id(child) not in to_collapse_ids]
@@ -397,9 +396,8 @@ def apply_node_budget(root: NcduDir, budget: int) -> None:
                             basename=child.basename,
                             parent=node,
                             count=child.total_files + child.total_directories,
-                            disk_size=child.total_bytes,
                             total_bytes=child.total_bytes,
-                            uncompressed=child.uncompressed,
+                            uncompressed_bytes=child.uncompressed.total_size,
                         )
                     )
             else:
@@ -456,9 +454,8 @@ def aggregate_collapsed_stats(
     directory: OpenDirState, disk_size: int, uncompressed: UncompressedStats
 ) -> None:
     directory.collapsed_count += 1
-    directory.collapsed_disk_size += disk_size
     directory.collapsed_total_bytes += disk_size
-    directory.collapsed_uncompressed.add_to_self(uncompressed)
+    directory.collapsed_uncompressed_bytes += uncompressed.total_size
 
 
 def finalize_open_dir(directory: OpenDirState) -> NcduDir:
@@ -474,9 +471,8 @@ def finalize_open_dir(directory: OpenDirState) -> NcduDir:
                 basename=f"({directory.collapsed_count} collapsed entries)",
                 parent=directory.node,
                 count=directory.collapsed_count,
-                disk_size=directory.collapsed_disk_size,
                 total_bytes=directory.collapsed_total_bytes,
-                uncompressed=directory.collapsed_uncompressed,
+                uncompressed_bytes=directory.collapsed_uncompressed_bytes,
             )
         )
 
