@@ -698,16 +698,16 @@ def render_overview_text_report(
 
     # Table header
     lines.append(
-        f"  {'Project':<40s}  {'Owner':<15s}  {'Latest':>12s}  {'Earliest':>12s}"
-        f"  {'Growth':>12s}  {'%':>8s}  {'Compressible':>14s}"
+        f"  {'Project':<40s} {'Owner':<15s} {'Latest':>8s} {'Earliest':>8s}"
+        f" {'Growth':>9s} {'%':>8s} {'Compressible':>8s}"
     )
     for project, owner, latest, earliest, growth, pct, compressible in rows:
         proj_display = project if len(project) <= 40 else "..." + project[-(40 - 3) :]
         owner_display = owner if len(owner) <= 15 else "..." + owner[-(15 - 3) :]
         lines.append(
-            f"  {proj_display:<40s}  {owner_display:<15s}"
-            f"  {format_bytes(latest):>12s}  {format_bytes(earliest):>12s}"
-            f"  {format_bytes(growth):>12s}  {pct:>8s}  {format_bytes(compressible):>14s}"
+            f"  {proj_display:<40s} {owner_display:<15s}"
+            f" {format_bytes(latest):>8s} {format_bytes(earliest):>8s}"
+            f" {format_bytes(growth):>9s} {pct:>8s} {format_bytes(compressible):>8s}"
         )
     lines.append("")
 

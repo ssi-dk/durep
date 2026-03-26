@@ -135,7 +135,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--jobs",
         type=positive_int,
         default=None,
-        help="Worker processes for parsing overview scans. Defaults to auto, capped at 8.",
+        help="Worker processes for parsing overview scans. If omitted, auto-select and cap at 8.",
     )
     overview.add_argument(
         "--out-dir", required=True, help="Output directory for generated reports."
@@ -241,6 +241,7 @@ def execute_detail(args: DetailArgs) -> None:
 
     log.info("Parsing scan: %s", args.scans[0])
     run_a = parse_ncdu_json_file(args.scans[0], top_n=args.top_n, display_nodes=args.display_nodes)
+
     log.debug(
         "Scan: %d files, %d directories",
         run_a.root.total_files,
