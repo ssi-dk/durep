@@ -10,7 +10,12 @@ from durep.analytics import (
 )
 from durep.metadata import Owner, ProjectName
 from durep.ncdu import NcduDir, UncompressedStats
-from durep.reports import drilldown_to_d3, render_overview_html_report, render_overview_text_report
+from durep.reports import (
+    drilldown_to_d3,
+    format_bytes,
+    render_overview_html_report,
+    render_overview_text_report,
+)
 
 from test_analytics import make_dir, make_file, make_sample
 
@@ -41,6 +46,46 @@ def test_d3_leaf_sum_matches_total_bytes_with_dir_overhead() -> None:
 
     assert d3_leaf_sum(d3) == root.total_bytes
 
+
+def test_format_bytes_uses_decimal_units() -> None:
+    assert format_bytes(1000) == "1.000 KB"
+    assert format_bytes(1_000_000) == "1.000 MB"
+
+
+def test_format_bytes_promotes_rounded_boundary_to_next_unit() -> None:
+    assert format_bytes(1_007_700_000_000) == "1.008 TB"
+
+
+def test_render_overview_html_report_uses_decimal_byte_formatter() -> None:
+    samples = [
+        ProjectSample(
+            project="proj_a",
+            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+            date=datetime.date(2024, 1, 1),
+            total_bytes=100,
+            total_files=1,
+            total_directories=1,
+            uncompressed=UncompressedStats.zero(),
+        )
+    ]
+    series = [
+        ProjectTimeSeries(
+            project="proj_a",
+            dates=[datetime.date(2024, 1, 1)],
+            bytes_values=[100],
+            uncompressed_values=[UncompressedStats.zero()],
+            measured=[True],
+        )
+    ]
+    owners = {PN("proj_a"): OW("Alice")}
+
+    html = render_overview_html_report(
+        series, render_overview_text_report(series, samples, owners), samples, owners
+    )
+
+    assert "n < 1000" in html
+    assert "n /= 1000" in html
+    assert "1024" not in html
 
 def test_d3_leaf_sum_matches_total_bytes_without_dir_overhead() -> None:
     root = make_dir(

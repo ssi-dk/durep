@@ -18,22 +18,32 @@ from durep.ncdu import NcduDir, NcduRun, path_str
 
 def format_bytes(n: int) -> str:
     sign = "-" if n < 0 else ""
-    n = abs(n)
-    if n < 1024:
-        return f"{sign}{n} B"
-    m = float(n)
-    del n
-    for si_prefix in "KMGTPE":
-        m /= 1024
-        if m < 1024:
-            # Always show 4 significant digits with trailing zeros.
-            if m >= 100:
-                decimals = 1
-            elif m >= 10:
-                decimals = 2
-            else:
-                decimals = 3
-            return f"{sign}{m:.{decimals}f} {si_prefix}B"
+    magnitude = abs(n)
+    if magnitude < 1000:
+        return f"{sign}{magnitude} B"
+
+    m = float(magnitude)
+    units = list("KMGTPE")
+    unit_index = -1
+    while m >= 1000 and unit_index < len(units) - 1:
+        m /= 1000
+        unit_index += 1
+
+    while True:
+        # Always show 4 significant digits with trailing zeros.
+        if m >= 100:
+            decimals = 1
+        elif m >= 10:
+            decimals = 2
+        else:
+            decimals = 3
+
+        rounded = round(m, decimals)
+        if rounded < 1000 or unit_index >= len(units) - 1:
+            return f"{sign}{rounded:.{decimals}f} {units[unit_index]}B"
+
+        m = rounded / 1000
+        unit_index += 1
 
     assert False
 
@@ -530,12 +540,19 @@ function renderSunburst(containerId, data, formatBytes) {
 }
 
 function formatBytes(n) {
-  if (n < 1024) return n + " B";
+  if (n < 1000) return n + " B";
   const units = ["KB", "MB", "GB", "TB", "PB"];
   let u = -1;
-  do { n /= 1024; u++; } while (n >= 1024 && u < units.length - 1);
-  const d = n >= 100 ? 1 : n >= 10 ? 2 : 3;
-  return n.toFixed(d) + " " + units[u];
+  do { n /= 1000; u++; } while (n >= 1000 && u < units.length - 1);
+  while (true) {
+    const d = n >= 100 ? 1 : n >= 10 ? 2 : 3;
+    const rounded = Number(n.toFixed(d));
+    if (rounded < 1000 || u >= units.length - 1) {
+      return rounded.toFixed(d) + " " + units[u];
+    }
+    n = rounded / 1000;
+    u++;
+  }
 }
 
 function formatDelta(d) {
@@ -698,16 +715,16 @@ def render_overview_text_report(
 
     # Table header
     lines.append(
-        f"  {'Project':<40s} {'Owner':<15s} {'Latest':>8s} {'Earliest':>8s}"
-        f" {'Growth':>9s} {'%':>8s} {'Compressible':>8s}"
+        f"  {'Project':<40s} {'Owner':<15s} {'Latest':>10s} {'Earliest':>10s}"
+        f" {'Growth':>9s} {'%':>8s} {'Compressible':>10s}"
     )
     for project, owner, latest, earliest, growth, pct, compressible in rows:
         proj_display = project if len(project) <= 40 else "..." + project[-(40 - 3) :]
         owner_display = owner if len(owner) <= 15 else "..." + owner[-(15 - 3) :]
         lines.append(
             f"  {proj_display:<40s} {owner_display:<15s}"
-            f" {format_bytes(latest):>8s} {format_bytes(earliest):>8s}"
-            f" {format_bytes(growth):>9s} {pct:>8s} {format_bytes(compressible):>8s}"
+            f" {format_bytes(latest):>10s} {format_bytes(earliest):>10s}"
+            f" {format_bytes(growth):>9s} {pct:>8s} {format_bytes(compressible):>10s}"
         )
     lines.append("")
 
@@ -1172,12 +1189,19 @@ def render_overview_html_report(
   <script>
 {STACKED_AREA_JS}
 function formatBytes(n) {{
-  if (n < 1024) return n + " B";
+  if (n < 1000) return n + " B";
   const units = ["KB", "MB", "GB", "TB", "PB"];
   let u = -1;
-  do {{ n /= 1024; u++; }} while (n >= 1024 && u < units.length - 1);
-  const d = n >= 100 ? 1 : n >= 10 ? 2 : 3;
-  return n.toFixed(d) + " " + units[u];
+  do {{ n /= 1000; u++; }} while (n >= 1000 && u < units.length - 1);
+  while (true) {{
+    const d = n >= 100 ? 1 : n >= 10 ? 2 : 3;
+    const rounded = Number(n.toFixed(d));
+    if (rounded < 1000 || u >= units.length - 1) {{
+      return rounded.toFixed(d) + " " + units[u];
+    }}
+    n = rounded / 1000;
+    u++;
+  }}
 }}
   const chartData = {chart_data};
   renderStackedArea('overview-chart', 'overview-legend', chartData, formatBytes);

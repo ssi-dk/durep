@@ -106,8 +106,8 @@ def build_parser() -> argparse.ArgumentParser:
     detail.add_argument(
         "--display-nodes",
         type=positive_int,
-        default=5000,
-        help="Maximum number of nodes in the display tree (default: 5000)."
+        default=8000,
+        help="Maximum number of nodes in the display tree (default: 8000)."
         " Directories are expanded largest-first until this budget is reached.",
     )
 
