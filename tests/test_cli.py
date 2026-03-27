@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from durep.cli import effective_overview_jobs, load_overview_samples, run
+from durep.cli import run
+from durep.workflows import effective_jobs, load_overview_samples
 
 
 MINIMAL_NCDU = [
@@ -389,17 +390,17 @@ def test_overview_rejects_bad_metadata_csv_columns(tmp_path: Path) -> None:
 
 
 def test_effective_overview_jobs_caps_auto_workers_at_8(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("durep.cli.os.cpu_count", lambda: 64)
+    monkeypatch.setattr("durep.workflows.os.cpu_count", lambda: 64)
 
-    assert effective_overview_jobs(None, 20) == 8
+    assert effective_jobs(None, 20) == 8
 
 
 def test_effective_overview_jobs_is_bounded_by_scan_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("durep.cli.os.cpu_count", lambda: 64)
+    monkeypatch.setattr("durep.workflows.os.cpu_count", lambda: 64)
 
-    assert effective_overview_jobs(None, 3) == 3
+    assert effective_jobs(None, 3) == 3
 
 
 def test_load_overview_samples_falls_back_to_serial_when_process_pool_unavailable(
@@ -413,9 +414,9 @@ def test_load_overview_samples_falls_back_to_serial_when_process_pool_unavailabl
         def __init__(self, max_workers: int) -> None:
             raise PermissionError("blocked")
 
-    monkeypatch.setattr("durep.cli.ProcessPoolExecutor", RaisingExecutor)
+    monkeypatch.setattr("durep.workflows.ProcessPoolExecutor", RaisingExecutor)
     monkeypatch.setattr(
-        "durep.cli.load_overview_sample",
+        "durep.workflows.load_overview_sample",
         lambda scan_path: scan_path.name,  # type: ignore[return-value]
     )
 

@@ -313,21 +313,6 @@ class ProjectTimeSeries:
         self.measured = measured
 
 
-def extract_project_sample(run: NcduRun) -> ProjectSample:
-    root_str = path_str(run.root)
-    # Extract last path component as project name
-    name = root_str.rsplit("/", 1)[-1] or root_str
-    return ProjectSample(
-        project=name,
-        timestamp=run.timestamp,
-        date=run.timestamp.date(),
-        total_bytes=run.root.total_bytes,
-        total_files=run.root.total_files,
-        total_directories=run.root.total_directories,
-        uncompressed=run.root.uncompressed,
-    )
-
-
 def build_overview_series(
     samples: list[ProjectSample],
 ) -> list[ProjectTimeSeries]:

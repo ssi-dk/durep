@@ -8,7 +8,6 @@ import pytest
 
 from collections.abc import Sequence
 
-from durep.analytics import extract_project_sample
 from durep.ncdu import (
     CollapsedNode,
     NcduDir,
@@ -225,7 +224,7 @@ def test_parse_ncdu_project_sample_matches_tree_parser_for_nested_tree(tmp_path:
     write_ncdu_json(source, root_tree, timestamp=1700000000)
 
     lazy_sample = parse_ncdu_project_sample(source)
-    tree_sample = extract_project_sample(parse_ncdu_json_file(source))
+    tree_sample = parse_ncdu_json_file(source).to_project_sample()
 
     assert lazy_sample == tree_sample
 
@@ -243,9 +242,46 @@ def test_parse_ncdu_project_sample_matches_tree_parser_for_directory_only_tree(
     write_ncdu_json(source, root_tree, timestamp=1700000000)
 
     lazy_sample = parse_ncdu_project_sample(source)
-    tree_sample = extract_project_sample(parse_ncdu_json_file(source))
+    tree_sample = parse_ncdu_json_file(source).to_project_sample()
 
     assert lazy_sample == tree_sample
+
+
+def test_ncdu_run_to_project_sample_uses_root_aggregates(tmp_path: Path) -> None:
+    root_tree = [
+        {"name": "/proj", "dsize": 10},
+        {"name": "reads.fastq", "dsize": 100},
+        [{"name": "sub", "dsize": 5}, {"name": "align.sam", "dsize": 40}],
+    ]
+
+    source = tmp_path / "snapshot.json"
+    write_ncdu_json(source, root_tree, timestamp=1700000000)
+
+    run = parse_ncdu_json_file(source)
+    sample = run.to_project_sample()
+
+    assert sample.project == "proj"
+    assert sample.timestamp == run.timestamp
+    assert sample.date == run.timestamp.date()
+    assert sample.total_bytes == run.root.total_bytes
+    assert sample.total_files == run.root.total_files
+    assert sample.total_directories == run.root.total_directories
+    assert sample.uncompressed == run.root.uncompressed
+
+
+def test_ncdu_run_to_project_sample_matches_lazy_parser(tmp_path: Path) -> None:
+    root_tree = [
+        {"name": "/proj", "dsize": 10},
+        {"name": "reads.fastq", "dsize": 100},
+        [{"name": "sub", "dsize": 5}, {"name": "align.sam", "dsize": 40}],
+    ]
+
+    source = tmp_path / "snapshot.json"
+    write_ncdu_json(source, root_tree, timestamp=1700000000)
+
+    run = parse_ncdu_json_file(source)
+
+    assert run.to_project_sample() == parse_ncdu_project_sample(source)
 
 
 def test_parse_ncdu_project_sample_rejects_relative_root_name(tmp_path: Path) -> None:

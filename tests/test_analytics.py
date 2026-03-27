@@ -10,7 +10,6 @@ from durep.analytics import (
     build_shrinkage_drilldown,
     compute_directory_deltas,
     compute_global_metrics,
-    extract_project_sample,
 )
 from durep.ncdu import CollapsedNode, NcduDir, NcduFile, NcduRun, UncompressedStats
 
@@ -278,7 +277,7 @@ def test_shrinkage_drilldown_returns_none_when_nothing_shrunk() -> None:
     assert result is None
 
 
-# --- extract_project_sample ---
+# --- NcduRun.to_project_sample ---
 
 
 def make_run(
@@ -289,9 +288,9 @@ def make_run(
     return NcduRun(root=root, timestamp=ts)
 
 
-def test_extract_project_sample_basic() -> None:
+def test_to_project_sample_basic() -> None:
     run = make_run("/proj", dsize=500, timestamp_epoch=1700000000)
-    sample = extract_project_sample(run)
+    sample = run.to_project_sample()
 
     assert sample.project == "proj"
     assert sample.date == datetime.date(2023, 11, 14)
@@ -300,12 +299,12 @@ def test_extract_project_sample_basic() -> None:
     assert sample.total_directories == 1
 
 
-def test_extract_project_sample_includes_uncompressed() -> None:
+def test_to_project_sample_includes_uncompressed() -> None:
     root = make_dir("/bio", None, lambda r: [make_file(r, "reads.fastq", 1000)])
     ts = datetime.datetime.fromtimestamp(1700000000, tz=datetime.timezone.utc)
     run = NcduRun(root=root, timestamp=ts)
 
-    sample = extract_project_sample(run)
+    sample = run.to_project_sample()
     assert sample.uncompressed.fastq == 1000
 
 

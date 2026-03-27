@@ -166,6 +166,21 @@ class NcduRun:
     root: NcduDir
     timestamp: datetime
 
+    def to_project_sample(self) -> "ProjectSample":
+        from durep.analytics import ProjectSample
+
+        root_str = path_str(self.root)
+        project = root_str.rsplit("/", 1)[-1] or root_str
+        return ProjectSample(
+            project=project,
+            timestamp=self.timestamp,
+            date=self.timestamp.date(),
+            total_bytes=self.root.total_bytes,
+            total_files=self.root.total_files,
+            total_directories=self.root.total_directories,
+            uncompressed=self.root.uncompressed,
+        )
+
 
 Event = tuple[str, Any]
 

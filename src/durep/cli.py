@@ -3,26 +3,16 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
-from durep.analytics import (
-    ProjectSample,
-    build_drilldown_tree,
-    build_growth_drilldown,
-    build_overview_series,
-    compute_directory_deltas,
-    compute_global_metrics,
-)
-from durep.metadata import ProjectName, load_project_owners, resolve_project_owners
-from durep.ncdu import NcduRun, parse_ncdu_json_file, parse_ncdu_project_sample, path_str
-from durep.reports import (
-    render_html_report,
-    render_overview_html_report,
-    render_overview_text_report,
-    render_text_report,
+from durep.workflows import (
+    effective_jobs,
+    load_detail_runs,
+    load_overview_samples,
+    write_detail_reports,
+    write_overview_reports,
 )
 
 log = logging.getLogger("durep")
@@ -181,146 +171,15 @@ def configure_logging(cli_value: str | None) -> None:
     )
 
 
-def load_overview_sample(scan_path: Path) -> ProjectSample:
-    return parse_ncdu_project_sample(scan_path)
-
-
-def effective_overview_jobs(requested_jobs: int | None, n_scans: int) -> int:
-    if requested_jobs is not None:
-        return requested_jobs
-    return min(n_scans, os.cpu_count() or 1, 8)
-
-
-def estimate_overview_scan_cost(scan_path: Path) -> int:
-    try:
-        return scan_path.stat().st_size
-    except OSError:
-        log.warning("Could not stat overview scan for scheduling: %s", scan_path)
-        return 0
-
-
-def schedule_overview_scans(scans: list[Path]) -> list[Path]:
-    """Schedule larger overview scans first to reduce worker tail latency."""
-    return sorted(scans, key=estimate_overview_scan_cost, reverse=True)
-
-
-def load_overview_samples(scans: list[Path], jobs: int) -> list[ProjectSample]:
-    scheduled_scans = schedule_overview_scans(scans)
-
-    for scan_path in scheduled_scans:
-        log.info("Queueing overview scan: %s", scan_path)
-
-    if jobs <= 1:
-        return [load_overview_sample(scan_path) for scan_path in scheduled_scans]
-
-    log.info("Loading overview samples with %d worker processes", jobs)
-    try:
-        with ProcessPoolExecutor(max_workers=jobs) as executor:
-            try:
-                return list(executor.map(load_overview_sample, scheduled_scans))
-            except ValueError as exc:
-                raise ValueError(str(exc)) from None
-    except (NotImplementedError, PermissionError):
-        log.warning("Process pool unavailable; falling back to serial overview parsing")
-        return [load_overview_sample(scan_path) for scan_path in scheduled_scans]
-
-
-def order_runs(run_a: NcduRun, run_b: NcduRun) -> tuple[NcduRun, NcduRun]:
-    """Return (current_run, previous_run) based on timestamps."""
-    if run_a.timestamp >= run_b.timestamp:
-        return run_a, run_b
-    return run_b, run_a
-
-
 def execute_detail(args: DetailArgs) -> None:
-    out_dir = args.out_dir
-    if out_dir.exists():
-        raise FileExistsError(f"output directory already exists: {out_dir}")
-    out_dir.mkdir(parents=True)
-    log.info("Output directory: %s", out_dir)
-
-    log.info("Parsing scan: %s", args.scans[0])
-    run_a = parse_ncdu_json_file(args.scans[0], top_n=args.top_n, display_nodes=args.display_nodes)
-
-    log.debug(
-        "Scan: %d files, %d directories",
-        run_a.root.total_files,
-        run_a.root.total_directories,
-    )
-
-    previous_run: NcduRun | None = None
-    if len(args.scans) == 2:
-        log.info("Parsing scan: %s", args.scans[1])
-        run_b = parse_ncdu_json_file(
-            args.scans[1], top_n=args.top_n, display_nodes=args.display_nodes
-        )
-        log.debug(
-            "Scan: %d files, %d directories",
-            run_b.root.total_files,
-            run_b.root.total_directories,
-        )
-
-        if path_str(run_a.root) != path_str(run_b.root):
-            raise ValueError(
-                f"root directories do not match: {path_str(run_a.root)} vs {path_str(run_b.root)}."
-                " Both scans must be of the same directory."
-            )
-
-        current_run, previous_run = order_runs(run_a, run_b)
-    else:
-        current_run = run_a
-
-    metrics = compute_global_metrics(current_run.root)
-
-    deltas = None
-    if previous_run is not None:
-        log.debug("Computing deltas")
-        deltas = compute_directory_deltas(current_run.root, previous_run.root)
-        log.info("Computed deltas for %d paths", len(deltas))
-
-    text = render_text_report(current_run, previous_run, metrics, deltas, args.top_n)
-    text_path = out_dir / "report.txt"
-    text_path.write_text(text, encoding="utf-8")
-    log.info("Wrote text report: %s", text_path)
-
-    log.debug("Building drilldown tree (top_n=%d)", args.top_n)
-    drilldown = build_drilldown_tree(current_run.root, args.top_n, deltas)
-
-    growth_drilldown = None
-    if deltas is not None:
-        log.debug("Building growth drilldown")
-        growth_drilldown = build_growth_drilldown(current_run.root, deltas, args.top_n)
-
-    html = render_html_report(current_run, previous_run, drilldown, metrics, growth_drilldown, text)
-    html_path = out_dir / "report.html"
-    html_path.write_text(html, encoding="utf-8")
-    log.info("Wrote HTML report: %s", html_path)
+    current_run, previous_run = load_detail_runs(args.scans, args.top_n, args.display_nodes)
+    write_detail_reports(args.out_dir, current_run, previous_run, args.top_n)
 
 
 def execute_overview(args: OverviewArgs) -> None:
-    out_dir = args.out_dir
-    if out_dir.exists():
-        raise FileExistsError(f"output directory already exists: {out_dir}")
-    out_dir.mkdir(parents=True)
-    log.info("Output directory: %s", out_dir)
-
-    jobs = effective_overview_jobs(args.jobs, len(args.scans))
+    jobs = effective_jobs(args.jobs, len(args.scans))
     samples = load_overview_samples(args.scans, jobs)
-
-    series = build_overview_series(samples)
-
-    csv_owners = load_project_owners(args.metadata_csv)
-    owners = resolve_project_owners([ProjectName(s.project) for s in series], csv_owners)
-
-    text = render_overview_text_report(series, samples, owners)
-    text_path = out_dir / "report.txt"
-    text_path.write_text(text, encoding="utf-8")
-    log.info("Wrote text report: %s", text_path)
-
-    html = render_overview_html_report(series, text, samples, owners)
-    html_path = out_dir / "report.html"
-    html_path.write_text(html, encoding="utf-8")
-    log.info("Wrote HTML report: %s", html_path)
+    write_overview_reports(args.out_dir, samples, args.metadata_csv)
 
 
 def run(argv: Sequence[str] | None = None) -> int:
