@@ -20,7 +20,7 @@ OW = Owner
 def test_load_valid_csv(tmp_path: Path) -> None:
     csv = write_csv(
         tmp_path / "meta.csv",
-        "DisplayName,LegalOwner\nproj_a,Alice\nproj_b,Bob\n",
+        "project,group\nproj_a,Alice\nproj_b,Bob\n",
     )
     result = load_project_owners(csv)
     assert result == {PN("proj_a"): OW("Alice"), PN("proj_b"): OW("Bob")}
@@ -29,7 +29,7 @@ def test_load_valid_csv(tmp_path: Path) -> None:
 def test_load_csv_strips_whitespace(tmp_path: Path) -> None:
     csv = write_csv(
         tmp_path / "meta.csv",
-        "DisplayName,LegalOwner\n  proj_a , Alice \n",
+        "project,group\n  proj_a , Alice \n",
     )
     result = load_project_owners(csv)
     assert result == {PN("proj_a"): OW("Alice")}
@@ -38,7 +38,7 @@ def test_load_csv_strips_whitespace(tmp_path: Path) -> None:
 def test_load_csv_empty_owner_returns_none(tmp_path: Path) -> None:
     csv = write_csv(
         tmp_path / "meta.csv",
-        "DisplayName,LegalOwner\nproj_a,\n",
+        "project,group\nproj_a,\n",
     )
     result = load_project_owners(csv)
     assert result == {PN("proj_a"): None}
@@ -48,7 +48,7 @@ def test_load_csv_missing_owner_field_in_row(tmp_path: Path) -> None:
     """A row with fewer columns than the header yields None from DictReader; should not crash."""
     csv = write_csv(
         tmp_path / "meta.csv",
-        "DisplayName,LegalOwner,Extra\nproj_a\n",
+        "project,group,Extra\nproj_a\n",
     )
     result = load_project_owners(csv)
     assert result == {PN("proj_a"): None}
@@ -57,18 +57,18 @@ def test_load_csv_missing_owner_field_in_row(tmp_path: Path) -> None:
 def test_load_csv_missing_display_name_column(tmp_path: Path) -> None:
     csv = write_csv(
         tmp_path / "meta.csv",
-        "Name,LegalOwner\nproj_a,Alice\n",
+        "Name,group\nproj_a,Alice\n",
     )
-    with pytest.raises(ValueError, match="missing required column.*DisplayName"):
+    with pytest.raises(ValueError, match="missing required column.*project"):
         load_project_owners(csv)
 
 
 def test_load_csv_missing_legal_owner_column(tmp_path: Path) -> None:
     csv = write_csv(
         tmp_path / "meta.csv",
-        "DisplayName,Owner\nproj_a,Alice\n",
+        "project,Owner\nproj_a,Alice\n",
     )
-    with pytest.raises(ValueError, match="missing required column.*LegalOwner"):
+    with pytest.raises(ValueError, match="missing required column.*group"):
         load_project_owners(csv)
 
 

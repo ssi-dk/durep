@@ -11,7 +11,6 @@ from durep.ncdu import (
     NcduDir,
     NcduEntry,
     NcduFile,
-    NcduRun,
     UncompressedStats,
     full_path,
     path_str,

@@ -8,9 +8,7 @@ from durep.ncdu import UncompressedStats
 
 
 def load_ugerm_module():
-    script_path = (
-        Path(__file__).resolve().parents[2] / "deploy" / "dev" / "scripts" / "ugerm.py"
-    )
+    script_path = Path(__file__).resolve().parents[2] / "deploy" / "dev" / "scripts" / "ugerm.py"
     spec = importlib.util.spec_from_file_location("ugerm_script", script_path)
     assert spec is not None
     assert spec.loader is not None
@@ -84,9 +82,7 @@ def test_build_detail_jobs_uses_only_latest_two_scans(tmp_path: Path) -> None:
     assert collect_sample is True
 
 
-def test_load_historical_project_samples_only_uses_older_scans(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_load_historical_project_samples_only_uses_older_scans(monkeypatch, tmp_path: Path) -> None:
     ugerm = load_ugerm_module()
 
     old = tmp_path / "_users_data_Projects_projA-20260101T010101.json"

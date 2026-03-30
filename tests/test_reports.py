@@ -87,6 +87,7 @@ def test_render_overview_html_report_uses_decimal_byte_formatter() -> None:
     assert "n /= 1000" in html
     assert "1024" not in html
 
+
 def test_d3_leaf_sum_matches_total_bytes_without_dir_overhead() -> None:
     root = make_dir(
         "/data",

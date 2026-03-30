@@ -36,7 +36,7 @@ def write_ncdu(
 def write_metadata_csv(tmp_path: Path, projects: list[str]) -> Path:
     """Write a metadata CSV with each project as its own owner."""
     csv_path = tmp_path / "metadata.csv"
-    lines = ["DisplayName,LegalOwner"]
+    lines = ["project,group"]
     for p in projects:
         lines.append(f"{p},{p}")
     csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
