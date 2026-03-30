@@ -46,21 +46,23 @@ class OverviewArgs:
     scans: list[Path]
     out_dir: Path
     jobs: int | None
-    metadata_csv: Path
+    metadata_csv: Path | None
 
     @classmethod
     def from_namespace(cls, namespace: argparse.Namespace) -> OverviewArgs:
+        raw_csv = namespace.metadata_csv_path
         return cls(
             scans=[Path(p) for p in namespace.scan],
             out_dir=Path(namespace.out_dir),
             jobs=namespace.jobs,
-            metadata_csv=Path(namespace.metadata_csv_path),
+            metadata_csv=Path(raw_csv) if raw_csv is not None else None,
         )
 
     def validate(self) -> None:
         if self.jobs is not None and self.jobs < 1:
             raise ValueError("jobs must be an integer > 0")
-        require_file(self.metadata_csv, "--metadata-csv-path")
+        if self.metadata_csv is not None:
+            require_file(self.metadata_csv, "--metadata-csv-path")
         for scan in self.scans:
             require_file(scan, str(scan))
 
@@ -132,8 +134,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     overview.add_argument(
         "--metadata-csv-path",
-        required=True,
-        help="CSV file with project and group columns for project ownership.",
+        default=None,
+        help="CSV file with project and group columns for project ownership."
+        " If omitted, projects are listed individually without group headers.",
     )
 
     return parser

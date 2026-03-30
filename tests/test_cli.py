@@ -357,6 +357,60 @@ def test_overview_parallel_preserves_parse_error_details(tmp_path: Path) -> None
         )
 
 
+def test_overview_without_metadata_csv(tmp_path: Path) -> None:
+    scan = write_ncdu(tmp_path / "scan.json")
+    out_dir = tmp_path / "out"
+
+    exit_code = run(
+        [
+            "overview",
+            str(scan),
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+
+    assert exit_code == 0
+    assert (out_dir / "report.txt").is_file()
+    assert (out_dir / "report.html").is_file()
+
+
+def test_overview_without_metadata_csv_omits_group_column(tmp_path: Path) -> None:
+    scan = write_ncdu(tmp_path / "scan.json")
+    out_dir = tmp_path / "out"
+
+    run(
+        [
+            "overview",
+            str(scan),
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+
+    text = (out_dir / "report.txt").read_text(encoding="utf-8")
+    assert "Group" not in text
+    assert "data" in text
+
+
+def test_overview_without_metadata_csv_html_has_no_owner_groups(tmp_path: Path) -> None:
+    scan = write_ncdu(tmp_path / "scan.json")
+    out_dir = tmp_path / "out"
+
+    run(
+        [
+            "overview",
+            str(scan),
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+
+    html = (out_dir / "report.html").read_text(encoding="utf-8")
+    assert '"owners": null' in html
+    assert "legend-item" in html
+
+
 def test_overview_rejects_missing_metadata_csv(tmp_path: Path) -> None:
     scan = write_ncdu(tmp_path / "scan.json")
     with pytest.raises(FileNotFoundError):

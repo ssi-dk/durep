@@ -14,7 +14,7 @@ from durep.analytics import (
     compute_directory_deltas,
     compute_global_metrics,
 )
-from durep.metadata import ProjectName, load_project_owners, resolve_project_owners
+from durep.metadata import Owner, ProjectName, load_project_owners, resolve_project_owners
 from durep.ncdu import NcduRun, parse_ncdu_json_file, parse_ncdu_project_sample, path_str
 from durep.reports import (
     render_html_report,
@@ -150,15 +150,17 @@ def write_detail_reports(
 def write_overview_reports(
     out_dir: Path,
     samples: list[ProjectSample],
-    metadata_csv: Path,
+    metadata_csv: Path | None,
 ) -> None:
     if out_dir.exists():
         raise FileExistsError(f"output directory already exists: {out_dir}")
 
     series = build_overview_series(samples)
 
-    csv_owners = load_project_owners(metadata_csv)
-    owners = resolve_project_owners([ProjectName(s.project) for s in series], csv_owners)
+    owners: dict[ProjectName, Owner] | None = None
+    if metadata_csv is not None:
+        csv_owners = load_project_owners(metadata_csv)
+        owners = resolve_project_owners([ProjectName(s.project) for s in series], csv_owners)
 
     text = render_overview_text_report(series, samples, owners)
     html = render_overview_html_report(series, text, samples, owners)

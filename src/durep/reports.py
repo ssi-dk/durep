@@ -679,7 +679,7 @@ def render_html_report(
 def render_overview_text_report(
     series: list[ProjectTimeSeries],
     samples: list[ProjectSample],
-    owners: dict[ProjectName, Owner],
+    owners: dict[ProjectName, Owner] | None,
 ) -> str:
     lines: list[str] = []
     lines.append("Disk usage overview")
@@ -691,9 +691,9 @@ def render_overview_text_report(
         return "\n".join(lines)
 
     # Build a table: one row per project
-    rows: list[tuple[str, str, int, int, int, str, int]] = []
+    rows: list[tuple[str, str | None, int, int, int, str, int]] = []
     for ts in series:
-        owner = owners.get(ProjectName(ts.project), Owner(ts.project))
+        owner = owners.get(ProjectName(ts.project), Owner(ts.project)) if owners else None
 
         # Find earliest and latest non-zero values
         earliest = 0
@@ -710,22 +710,41 @@ def render_overview_text_report(
 
         rows.append((ts.project, owner, latest, earliest, growth, pct, compressible))
 
-    # Sort by owner, then by latest size descending within owner
-    rows.sort(key=lambda r: (r[1], -r[2]))
+    # Sort by owner then latest size descending (if owners), else just by latest size descending
+    if owners:
+        rows.sort(key=lambda r: (r[1] or "", -r[2]))
+    else:
+        rows.sort(key=lambda r: -r[2])
 
-    # Table header
-    lines.append(
-        f"  {'Project':<40s} {'Owner':<15s} {'Latest':>10s} {'Earliest':>10s}"
-        f" {'Growth':>9s} {'%':>8s} {'Compressible':>10s}"
-    )
-    for project, owner, latest, earliest, growth, pct, compressible in rows:
-        proj_display = project if len(project) <= 40 else "..." + project[-(40 - 3) :]
-        owner_display = owner if len(owner) <= 15 else "..." + owner[-(15 - 3) :]
+    if owners:
+        # Table header with group column
         lines.append(
-            f"  {proj_display:<40s} {owner_display:<15s}"
-            f" {format_bytes(latest):>10s} {format_bytes(earliest):>10s}"
-            f" {format_bytes(growth):>9s} {pct:>8s} {format_bytes(compressible):>10s}"
+            f"  {'Project':<40s} {'Group':<15s} {'Latest':>10s} {'Earliest':>10s}"
+            f" {'Growth':>9s} {'%':>8s} {'Compressible':>10s}"
         )
+        for project, owner, latest, earliest, growth, pct, compressible in rows:
+            proj_display = project if len(project) <= 40 else "..." + project[-(40 - 3) :]
+            owner_display = (
+                (owner or "") if len(owner or "") <= 15 else "..." + (owner or "")[-(15 - 3) :]
+            )
+            lines.append(
+                f"  {proj_display:<40s} {owner_display:<15s}"
+                f" {format_bytes(latest):>10s} {format_bytes(earliest):>10s}"
+                f" {format_bytes(growth):>9s} {pct:>8s} {format_bytes(compressible):>10s}"
+            )
+    else:
+        # Table header without group column
+        lines.append(
+            f"  {'Project':<40s} {'Latest':>10s} {'Earliest':>10s}"
+            f" {'Growth':>9s} {'%':>8s} {'Compressible':>10s}"
+        )
+        for project, _owner, latest, earliest, growth, pct, compressible in rows:
+            proj_display = project if len(project) <= 40 else "..." + project[-(40 - 3) :]
+            lines.append(
+                f"  {proj_display:<40s}"
+                f" {format_bytes(latest):>10s} {format_bytes(earliest):>10s}"
+                f" {format_bytes(growth):>9s} {pct:>8s} {format_bytes(compressible):>10s}"
+            )
     lines.append("")
 
     return "\n".join(lines)
@@ -938,74 +957,83 @@ function renderStackedArea(containerId, legendId, seriesData, formatBytes) {
     tooltip.style("display", "none");
   }
 
-  // Group projects by owner
-  const owners = seriesData.owners || {};
-  const ownerOrder = [];
-  const ownerGroups = new Map();
-  sortedProjects.forEach(p => {
-    const owner = owners[p] || p;
-    if (!ownerGroups.has(owner)) {
-      ownerGroups.set(owner, []);
-      ownerOrder.push(owner);
-    }
-    ownerGroups.get(owner).push(p);
-  });
+  // Group projects by owner (if available)
+  const owners = seriesData.owners;
+  const hasOwners = owners != null;
 
-  // Render grouped legend
-  ownerOrder.forEach(owner => {
-    const groupProjects = ownerGroups.get(owner);
-    const group = legendContainer.append("div").attr("class", "owner-group");
-
-    group.append("button")
+  function renderProjectButton(container, project) {
+    const btn = container.append("button")
       .attr("type", "button")
-      .attr("class", "owner-header")
-      .text(owner)
+      .attr("class", "legend-item")
+      .datum(project)
       .on("click", function(event) {
         event.preventDefault();
-        const allHidden = groupProjects.every(p => hidden.has(p));
-        groupProjects.forEach(p => {
-          if (allHidden) hidden.delete(p); else hidden.add(p);
-        });
+        if (hidden.has(project)) hidden.delete(project);
+        else hidden.add(project);
         syncLegend();
         redraw();
       });
 
-    const projectsDiv = group.append("div").attr("class", "owner-projects");
+    btn.append("span")
+      .attr("class", "legend-swatch")
+      .style("background-color", color(project));
 
-    groupProjects.forEach(project => {
-      const btn = projectsDiv.append("button")
+    btn.append("span")
+      .attr("class", "legend-label")
+      .text(project);
+  }
+
+  if (hasOwners) {
+    const ownerOrder = [];
+    const ownerGroups = new Map();
+    sortedProjects.forEach(p => {
+      const owner = owners[p] || p;
+      if (!ownerGroups.has(owner)) {
+        ownerGroups.set(owner, []);
+        ownerOrder.push(owner);
+      }
+      ownerGroups.get(owner).push(p);
+    });
+
+    ownerOrder.forEach(owner => {
+      const groupProjects = ownerGroups.get(owner);
+      const group = legendContainer.append("div").attr("class", "owner-group");
+
+      group.append("button")
         .attr("type", "button")
-        .attr("class", "legend-item")
-        .datum(project)
+        .attr("class", "owner-header")
+        .text(owner)
         .on("click", function(event) {
           event.preventDefault();
-          if (hidden.has(project)) hidden.delete(project);
-          else hidden.add(project);
+          const allHidden = groupProjects.every(p => hidden.has(p));
+          groupProjects.forEach(p => {
+            if (allHidden) hidden.delete(p); else hidden.add(p);
+          });
           syncLegend();
           redraw();
         });
 
-      btn.append("span")
-        .attr("class", "legend-swatch")
-        .style("background-color", color(project));
-
-      btn.append("span")
-        .attr("class", "legend-label")
-        .text(project);
+      const projectsDiv = group.append("div").attr("class", "owner-projects");
+      groupProjects.forEach(project => renderProjectButton(projectsDiv, project));
     });
-  });
+  } else {
+    const projectsDiv = legendContainer.append("div").attr("class", "owner-projects");
+    sortedProjects.forEach(project => renderProjectButton(projectsDiv, project));
+  }
 
   function syncLegend() {
     legendContainer.selectAll(".legend-item")
       .classed("is-hidden", function() { return hidden.has(d3.select(this).datum()); });
-    legendContainer.selectAll(".owner-group").each(function() {
-      const grp = d3.select(this);
-      const items = grp.selectAll(".legend-item");
-      const allHidden = items.filter(function() {
-        return !hidden.has(d3.select(this).datum());
-      }).empty();
-      grp.select(".owner-header").classed("is-hidden", allHidden);
-    });
+    if (hasOwners) {
+      legendContainer.selectAll(".owner-group").each(function() {
+        const grp = d3.select(this);
+        const items = grp.selectAll(".legend-item");
+        const allHidden = items.filter(function() {
+          return !hidden.has(d3.select(this).datum());
+        }).empty();
+        grp.select(".owner-header").classed("is-hidden", allHidden);
+      });
+    }
   }
 
   syncLegend();
@@ -1041,7 +1069,7 @@ def render_overview_html_report(
     series: list[ProjectTimeSeries],
     text_report: str,
     samples: list[ProjectSample],
-    owners: dict[ProjectName, Owner],
+    owners: dict[ProjectName, Owner] | None,
 ) -> str:
     if not series:
         dates: list[str] = []
@@ -1086,7 +1114,9 @@ def render_overview_html_report(
             "compressible": per_project_compressible,
             "owners": {
                 s.project: owners.get(ProjectName(s.project), Owner(s.project)) for s in series
-            },
+            }
+            if owners
+            else None,
         }
     )
 
