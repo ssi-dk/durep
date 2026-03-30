@@ -126,8 +126,8 @@ class OpenDirState:
     # Finalized child directories, keyed by their order. A dict rather than a
     # list so that collapse_dir_inline can replace an entry in O(1).
     dir_children: dict[int, NcduEntry] = field(default_factory=dict)
-    # Min-heap of (disk_size, order, NcduFile) keeping the top_n largest files.
-    kept_files: list[tuple[int, int, NcduFile]] = field(default_factory=list)
+    # Min-heap of (disk_size, order, NcduFile, uncompressed_total) keeping the top_n largest files.
+    kept_files: list[tuple[int, int, NcduFile, int]] = field(default_factory=list)
     # Aggregate stats for files evicted from kept_files, materialized as a
     # single CollapsedNode in finalize_open_dir.
     collapsed_count: int = 0
@@ -430,127 +430,27 @@ def apply_node_budget(root: NcduDir, budget: int) -> None:
         node.children = new_children
 
 
-def add_file_to_open_dir(
-    directory: OpenDirState, basename: str, disk_size: int, top_n: int
-) -> None:
-    file_uncompressed = UncompressedStats.from_file_node(basename, disk_size)
-    order = directory.next_child_order
-    directory.next_child_order += 1
-
-    directory.node.total_bytes += disk_size
-    directory.node.total_files += 1
-    directory.node.uncompressed.add_to_self(file_uncompressed)
-
-    if len(directory.kept_files) < top_n:
-        heapq.heappush(
-            directory.kept_files,
-            (
-                disk_size,
-                order,
-                NcduFile(
-                    basename=basename,
-                    parent=directory.node,
-                    disk_size=disk_size,
-                ),
-            ),
-        )
-        return
-
-    smallest_bytes, _smallest_order, _smallest_file = directory.kept_files[0]
-    if disk_size > smallest_bytes:
-        _bytes, _order, evicted = heapq.heapreplace(
-            directory.kept_files,
-            (
-                disk_size,
-                order,
-                NcduFile(
-                    basename=basename,
-                    parent=directory.node,
-                    disk_size=disk_size,
-                ),
-            ),
-        )
-        aggregate_collapsed_stats(directory, evicted.disk_size, evicted.uncompressed)
-    else:
-        aggregate_collapsed_stats(directory, disk_size, file_uncompressed)
-
-
-def aggregate_collapsed_stats(
-    directory: OpenDirState, disk_size: int, uncompressed: UncompressedStats
-) -> None:
-    directory.collapsed_count += 1
-    directory.collapsed_total_bytes += disk_size
-    directory.collapsed_uncompressed_bytes += uncompressed.total_size
-
-
-def finalize_open_dir(
-    directory: OpenDirState,
-    finalized_child_index: dict[int, int],
-) -> NcduDir:
-    children: list[tuple[int, NcduEntry]] = []
-    children.extend(directory.dir_children.items())
-    children.extend((order, file_node) for _bytes, order, file_node in directory.kept_files)
-    children.sort(key=lambda child: child[0])
-    directory.node.children = [child for _order, child in children]
-
-    for i, child in enumerate(directory.node.children):
-        if isinstance(child, NcduDir):
-            finalized_child_index[id(child)] = i
-
-    if directory.collapsed_count > 0:
-        directory.node.children.append(
-            CollapsedNode(
-                basename=f"({directory.collapsed_count} collapsed entries)",
-                parent=directory.node,
-                count=directory.collapsed_count,
-                total_bytes=directory.collapsed_total_bytes,
-                uncompressed_bytes=directory.collapsed_uncompressed_bytes,
-            )
-        )
-
-    return directory.node
-
-
-def collapse_dir_inline(
-    node: NcduDir,
-    order_in_parent: int,
-    open_state_map: dict[int, OpenDirState],
-    finalized_child_index: dict[int, int],
-) -> None:
-    """Replace *node* with a CollapsedNode in its parent's children.
-
-    If the parent is still open (in *open_state_map*), does an O(1) dict
-    replacement.  Otherwise looks up the position via *finalized_child_index*.
-    """
-    assert node.parent is not None  # root is never collapsed
-
-    replacement = CollapsedNode(
-        basename=node.basename,
-        parent=node.parent,
-        count=node.total_files + node.total_directories,
-        total_bytes=node.total_bytes,
-        uncompressed_bytes=node.uncompressed.total_size,
-    )
-
-    parent_state = open_state_map.get(id(node.parent))
-    if parent_state is not None:
-        parent_state.dir_children[order_in_parent] = replacement
-    else:
-        idx = finalized_child_index.pop(id(node))
-        node.parent.children[idx] = replacement
-
-    node.children.clear()
-
-
 def parse_tree_streaming(
     parser: Iterator[Event], top_n: int = 20, dir_budget: int = 5000
 ) -> NcduDir:
+    # Hoist frequently-used callables to locals to avoid repeated global/attribute lookups
+    _heappush = heapq.heappush
+    _heapreplace = heapq.heapreplace
+    _heappushpop = heapq.heappushpop
+    _heapify = heapq.heapify
+    _ext_to_fmt = EXTENSION_TO_FORMAT
+    _id = id
+    _len = len
+
     dir_stack: list[OpenDirState] = []
+    dir_stack_append = dir_stack.append
+    dir_stack_pop = dir_stack.pop
     awaiting_dir_metadata = False
-    current_map: dict[str, Any] = {}
     in_map = False
     is_heap = False
     map_key = ""
+    map_name = ""
+    map_dsize = 0
     root: NcduDir | None = None
 
     # Inline directory collapsing state
@@ -562,83 +462,191 @@ def parse_tree_streaming(
     finalized_child_index: dict[int, int] = {}  # id(dir) -> index in parent.children
 
     for event, value in parser:
-        # Directories are [dir_element, elements...], so the boolean here means the next map
-        # contain directory metadata
-        if event == "start_array":
-            awaiting_dir_metadata = True
+        # Branch order optimized: ~22M of ~29M events occur inside maps,
+        # so check in_map first.  Within a map, value events (~11M) are more
+        # frequent than map_key (~5.5M) or end_map (~5.5M).
+        if in_map:
+            if event == "map_key":
+                map_key = value
+
+            elif event == "end_map":
+                in_map = False
+                name = map_name
+                dsize = map_dsize
+
+                if awaiting_dir_metadata:
+                    awaiting_dir_metadata = False
+                    if not name:
+                        raise ValueError("Each ncdu entry must include a non-empty string 'name'")
+                    parent = dir_stack[-1].node if dir_stack else None
+                    node = NcduDir(
+                        basename=name,
+                        parent=parent,
+                        disk_size=dsize,
+                        total_bytes=dsize,
+                        total_files=0,
+                        total_directories=1,
+                        uncompressed=UncompressedStats(0, 0, 0, 0, 0),
+                    )
+                    state = OpenDirState(node=node)
+                    dir_stack_append(state)
+                    open_state_map[_id(node)] = state
+                else:
+                    # --- inlined add_file_to_open_dir ---
+                    if not name:
+                        raise ValueError("Each ncdu entry must include a non-empty string 'name'")
+                    directory = dir_stack[-1]
+                    dir_node = directory.node
+
+                    dir_node.total_bytes += dsize
+                    dir_node.total_files += 1
+
+                    # Inlined from_file_node: compute uncompressed category
+                    # without allocating an UncompressedStats per file.
+                    dot = name.rfind(".")
+                    fmt = _ext_to_fmt.get(name[dot + 1 :]) if dot >= 0 else None
+
+                    if fmt is not None:
+                        unc = dir_node.uncompressed
+                        if fmt == "fasta":
+                            unc.fasta += dsize
+                        elif fmt == "fastq":
+                            unc.fastq += dsize
+                        elif fmt == "vcf":
+                            unc.vcf += dsize
+                        elif fmt == "sam":
+                            unc.sam += dsize
+                        else:
+                            unc.other += dsize
+                        file_unc_total = dsize
+                    else:
+                        file_unc_total = 0
+
+                    order = directory.next_child_order
+                    directory.next_child_order += 1
+                    kept = directory.kept_files
+
+                    if _len(kept) < top_n:
+                        _heappush(
+                            kept,
+                            (
+                                dsize,
+                                order,
+                                NcduFile(basename=name, parent=dir_node, disk_size=dsize),
+                                file_unc_total,
+                            ),
+                        )
+                    elif dsize > kept[0][0]:
+                        _ev_bytes, _ev_ord, _ev_file, ev_unc = _heapreplace(
+                            kept,
+                            (
+                                dsize,
+                                order,
+                                NcduFile(basename=name, parent=dir_node, disk_size=dsize),
+                                file_unc_total,
+                            ),
+                        )
+                        directory.collapsed_count += 1
+                        directory.collapsed_total_bytes += _ev_bytes
+                        directory.collapsed_uncompressed_bytes += ev_unc
+                    else:
+                        directory.collapsed_count += 1
+                        directory.collapsed_total_bytes += dsize
+                        directory.collapsed_uncompressed_bytes += file_unc_total
+
+            else:
+                # Value event inside a map — only capture name and dsize
+                if map_key == "name":
+                    map_name = value
+                elif map_key == "dsize":
+                    map_dsize = value  # ijson yajl2_c already returns int
 
         elif event == "start_map":
             in_map = True
-            current_map.clear()
+            map_name = ""
+            map_dsize = 0
 
-        elif event == "map_key":
-            map_key = value
-
-        elif event == "end_map":
-            # End of directory metadata or file
-            in_map = False
-            if awaiting_dir_metadata:
-                # If end of directory metadata, make the directory and push to stack
-                awaiting_dir_metadata = False
-                parent = dir_stack[-1].node if dir_stack else None
-                basename = get_required_name(current_map)
-                disk_size = parse_disk_size(current_map)
-                node = NcduDir(
-                    basename=basename,
-                    parent=parent,
-                    disk_size=disk_size,
-                    total_bytes=disk_size,
-                    total_files=0,
-                    total_directories=1,
-                    uncompressed=UncompressedStats.zero(),
-                )
-                state = OpenDirState(node=node)
-                dir_stack.append(state)
-                open_state_map[id(node)] = state
-            else:
-                # Else, it must be a file. Make a file and append to parent dir
-                basename = get_required_name(current_map)
-                disk_size = parse_disk_size(current_map)
-                add_file_to_open_dir(dir_stack[-1], basename, disk_size, top_n)
+        elif event == "start_array":
+            awaiting_dir_metadata = True
 
         elif event == "end_array":
-            # End of directory. All children have been parsed. We can remove from stack,
-            # and collapse children
             if dir_stack:
-                popped_state = dir_stack.pop()
-                open_state_map.pop(id(popped_state.node), None)
-                finished = finalize_open_dir(popped_state, finalized_child_index)
+                popped_state = dir_stack_pop()
+                popped_node = popped_state.node
+                open_state_map.pop(_id(popped_node), None)
+
+                # --- inlined finalize_open_dir ---
+                children: list[tuple[int, NcduEntry]] = []
+                children.extend(popped_state.dir_children.items())
+                children.extend((o, f) for _b, o, f, _u in popped_state.kept_files)
+                children.sort(key=lambda c: c[0])
+                popped_node.children = new_children = [c for _o, c in children]
+
+                for i, child in enumerate(new_children):
+                    if isinstance(child, NcduDir):
+                        finalized_child_index[_id(child)] = i
+
+                if popped_state.collapsed_count > 0:
+                    new_children.append(
+                        CollapsedNode(
+                            basename=f"({popped_state.collapsed_count} collapsed entries)",
+                            parent=popped_node,
+                            count=popped_state.collapsed_count,
+                            total_bytes=popped_state.collapsed_total_bytes,
+                            uncompressed_bytes=popped_state.collapsed_uncompressed_bytes,
+                        )
+                    )
+                finished = popped_node
+
                 if dir_stack:
-                    parent = dir_stack[-1]
-                    order = parent.next_child_order
-                    parent.next_child_order += 1
-                    parent.dir_children[order] = finished
-                    parent.node.total_bytes += finished.total_bytes
-                    parent.node.total_files += finished.total_files
-                    parent.node.total_directories += finished.total_directories
-                    parent.node.uncompressed.add_to_self(finished.uncompressed)
+                    parent_state = dir_stack[-1]
+                    order = parent_state.next_child_order
+                    parent_state.next_child_order += 1
+                    parent_state.dir_children[order] = finished
+                    parent_node = parent_state.node
+                    parent_node.total_bytes += finished.total_bytes
+                    parent_node.total_files += finished.total_files
+                    parent_node.total_directories += finished.total_directories
+                    parent_node.uncompressed.add_to_self(finished.uncompressed)
 
                     # Push onto dir_heap for potential inline collapsing
-                    depth = len(dir_stack)  # depth after popping
-                    heap_element = (finished.total_bytes, -depth, heap_counter, order, finished)
+                    depth = _len(dir_stack)
+                    heap_element = (
+                        finished.total_bytes,
+                        -depth,
+                        heap_counter,
+                        order,
+                        finished,
+                    )
                     heap_counter += 1
                     if is_heap:
-                        _bytes, _neg_depth, _cnt, victim_order, victim = heapq.heappushpop(
+                        _bytes, _neg_depth, _cnt, victim_order, victim = _heappushpop(
                             dir_heap, heap_element
                         )
-                        collapse_dir_inline(
-                            victim, victim_order, open_state_map, finalized_child_index
+                        # --- inlined collapse_dir_inline ---
+                        victim_parent = victim.parent
+                        assert victim_parent is not None
+                        replacement = CollapsedNode(
+                            basename=victim.basename,
+                            parent=victim_parent,
+                            count=victim.total_files + victim.total_directories,
+                            total_bytes=victim.total_bytes,
+                            uncompressed_bytes=victim.uncompressed.total_size,
                         )
+                        vp_state = open_state_map.get(_id(victim_parent))
+                        if vp_state is not None:
+                            vp_state.dir_children[victim_order] = replacement
+                        else:
+                            idx = finalized_child_index.pop(_id(victim))
+                            victim_parent.children[idx] = replacement
+                        victim.children.clear()
                     else:
                         dir_heap.append(heap_element)
-                        if len(dir_heap) >= dir_budget:
-                            heapq.heapify(dir_heap)
+                        if _len(dir_heap) >= dir_budget:
+                            _heapify(dir_heap)
                             is_heap = True
                 else:
                     root = finished
-
-        elif in_map:
-            current_map[map_key] = value
 
     if root is None:
         raise ValueError("Fourth field (root directory) is not a valid directory in NCDU format")
