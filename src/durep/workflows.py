@@ -114,8 +114,6 @@ def write_detail_reports(
 ) -> None:
     if out_dir.exists():
         raise FileExistsError(f"output directory already exists: {out_dir}")
-    out_dir.mkdir(parents=True)
-    log.info("Output directory: %s", out_dir)
 
     metrics = compute_global_metrics(current_run.root)
 
@@ -126,9 +124,6 @@ def write_detail_reports(
         log.info("Computed deltas for %d paths", len(deltas))
 
     text = render_text_report(current_run, previous_run, metrics, deltas, top_n)
-    text_path = out_dir / "report.txt"
-    text_path.write_text(text, encoding="utf-8")
-    log.info("Wrote text report: %s", text_path)
 
     log.debug("Building drilldown tree (top_n=%d)", top_n)
     drilldown = build_drilldown_tree(current_run.root, top_n, deltas)
@@ -139,6 +134,14 @@ def write_detail_reports(
         growth_drilldown = build_growth_drilldown(current_run.root, deltas, top_n)
 
     html = render_html_report(current_run, previous_run, drilldown, metrics, growth_drilldown, text)
+
+    out_dir.mkdir(parents=True)
+    log.info("Output directory: %s", out_dir)
+
+    text_path = out_dir / "report.txt"
+    text_path.write_text(text, encoding="utf-8")
+    log.info("Wrote text report: %s", text_path)
+
     html_path = out_dir / "report.html"
     html_path.write_text(html, encoding="utf-8")
     log.info("Wrote HTML report: %s", html_path)
@@ -151,8 +154,6 @@ def write_overview_reports(
 ) -> None:
     if out_dir.exists():
         raise FileExistsError(f"output directory already exists: {out_dir}")
-    out_dir.mkdir(parents=True)
-    log.info("Output directory: %s", out_dir)
 
     series = build_overview_series(samples)
 
@@ -160,11 +161,15 @@ def write_overview_reports(
     owners = resolve_project_owners([ProjectName(s.project) for s in series], csv_owners)
 
     text = render_overview_text_report(series, samples, owners)
+    html = render_overview_html_report(series, text, samples, owners)
+
+    out_dir.mkdir(parents=True)
+    log.info("Output directory: %s", out_dir)
+
     text_path = out_dir / "report.txt"
     text_path.write_text(text, encoding="utf-8")
     log.info("Wrote text report: %s", text_path)
 
-    html = render_overview_html_report(series, text, samples, owners)
     html_path = out_dir / "report.html"
     html_path.write_text(html, encoding="utf-8")
     log.info("Wrote HTML report: %s", html_path)
