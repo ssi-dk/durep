@@ -133,7 +133,7 @@ def build_parser() -> argparse.ArgumentParser:
     overview.add_argument(
         "--metadata-csv-path",
         required=True,
-        help="CSV file with DisplayName and LegalOwner columns for project ownership.",
+        help="CSV file with project and group columns for project ownership.",
     )
 
     return parser

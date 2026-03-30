@@ -8,8 +8,8 @@ from typing import NewType
 
 log = logging.getLogger("durep")
 
-DISPLAY_NAME_COLUMN = "DisplayName"
-LEGAL_OWNER_COLUMN = "LegalOwner"
+DISPLAY_NAME_COLUMN = "project"
+LEGAL_OWNER_COLUMN = "group"
 
 ProjectName = NewType("ProjectName", str)
 Owner = NewType("Owner", str)
@@ -18,8 +18,8 @@ Owner = NewType("Owner", str)
 def load_project_owners(csv_path: Path) -> dict[ProjectName, Owner | None]:
     """Parse a metadata CSV and return a mapping of project display name to legal owner.
 
-    Raises ValueError if the required columns (DisplayName, LegalOwner) are missing.
-    Returns None for projects whose LegalOwner field is missing or blank.
+    Raises ValueError if the required columns (project, group) are missing.
+    Returns None for projects whose group field is missing or blank.
     """
     with csv_path.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
