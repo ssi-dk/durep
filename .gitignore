@@ -65,6 +65,7 @@ venv.bak/
 # Project specific
 *.log
 *.lock
+!/uv.lock
 
 # Conda build artifacts
 conda-bld/

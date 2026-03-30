@@ -9,18 +9,16 @@ Two subcommands produce different HTML reports:
 - `src/durep/ncdu.py` — NCDU JSON parser, produces `NcduNode` tree and `NcduRun` (with timestamp)
 - `src/durep/analytics.py` — Computation: uncompressed stats, global metrics, directory deltas, drilldown trees
 - `src/durep/reports.py` — Text and HTML report rendering, D3 sunburst JS
-- `src/durep/cli.py` — CLI argument parsing and pipeline orchestration
+- `src/durep/cli.py` — CLI argument parsing
+- `src/durep/workflows.py` - Pipeline orchestration
 
 ## Running
 ```bash
 # Install (first time, or after changing dependencies)
-uv pip install -e ".[test]"
+uv pip install -e ".[dev]"
 
 # Run tests
 .venv/bin/python -m pytest tests/ -v
-
-# Run the CLI
-.venv/bin/python -m durep --current PATH --out-dir PATH [--previous PATH]
 
 # Lint and format
 ruff check .
@@ -35,16 +33,17 @@ Open the generated `report.html` in a browser and verify:
 - If `--previous` was given: growth sunburst appears
 
 ## Coding style
-* Never add an AI agent as a co-author on commits
+* Never add an AI agent as git commit co-author
 * Do not prepend single underscores to names; the only API is the CLI, so all functions are private
 * Use type hints in every signature to be able to lean on static checks.
+* Avoid default values for function arguments
 
 ## After making changes:
 * Check for type errors using `.venv/bin/pyright 2>&1`. Fix errors IF you judge that the errors are not false positives,
   and that fixing them will not degrade the code.
   An example of where fixing the error may degrade the code is if a NumPy array does not play well with typing,
   and you could fix the type errors by switching to a normal list, but that would degrade performance.
-* After types pass, run `ruff check .` and address warnings, then run `ruff format .`
+* After types pass, run linter, then formatter
 
 ## Other notes:
 * The only stable API is the CLI, so any source-code level changes are considered non-breaking.
