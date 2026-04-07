@@ -5,9 +5,7 @@ from collections.abc import Callable, Iterable
 from durep.analytics import (
     ProjectSample,
     build_drilldown_tree,
-    build_growth_drilldown,
     build_overview_series,
-    build_shrinkage_drilldown,
     compute_directory_deltas,
     compute_global_metrics,
 )
@@ -234,47 +232,6 @@ def test_drilldown_other_node_bytes_equal_remainder_sum() -> None:
     other = drilldown.children[-1]
     # Kept: f0 (600), f1 (500). Remainder: f2 (400) + f3 (300) + f4 (200) + f5 (100) = 1000
     assert other.total_bytes == 1000
-
-
-# --- build_growth_drilldown / build_shrinkage_drilldown ---
-
-
-def test_growth_drilldown_returns_none_when_nothing_grew() -> None:
-    prev_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 500)])
-    curr_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 200)])
-    deltas = compute_directory_deltas(curr_root, prev_root)
-
-    result = build_growth_drilldown(curr_root, deltas, top_n=10)
-    assert result is None
-
-
-def test_growth_drilldown_captures_positive_deltas() -> None:
-    prev_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 100)])
-    curr_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 400)])
-    deltas = compute_directory_deltas(curr_root, prev_root)
-
-    result = build_growth_drilldown(curr_root, deltas, top_n=10)
-    assert result is not None
-    assert result.total_bytes == 300
-
-
-def test_shrinkage_drilldown_captures_negative_deltas() -> None:
-    prev_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 500)])
-    curr_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 200)])
-    deltas = compute_directory_deltas(curr_root, prev_root)
-
-    result = build_shrinkage_drilldown(curr_root, deltas, top_n=10)
-    assert result is not None
-    assert result.total_bytes == 300
-
-
-def test_shrinkage_drilldown_returns_none_when_nothing_shrunk() -> None:
-    prev_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 100)])
-    curr_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 400)])
-    deltas = compute_directory_deltas(curr_root, prev_root)
-
-    result = build_shrinkage_drilldown(curr_root, deltas, top_n=10)
-    assert result is None
 
 
 # --- NcduRun.to_project_sample ---

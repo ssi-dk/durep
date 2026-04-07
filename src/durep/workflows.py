@@ -9,7 +9,6 @@ from pathlib import Path
 from durep.analytics import (
     ProjectSample,
     build_drilldown_tree,
-    build_growth_drilldown,
     build_overview_series,
     compute_directory_deltas,
     compute_global_metrics,
@@ -128,12 +127,7 @@ def write_detail_reports(
     log.debug("Building drilldown tree (top_n=%d)", top_n)
     drilldown = build_drilldown_tree(current_run.root, top_n, deltas)
 
-    growth_drilldown = None
-    if deltas is not None:
-        log.debug("Building growth drilldown")
-        growth_drilldown = build_growth_drilldown(current_run.root, deltas, top_n)
-
-    html = render_html_report(current_run, previous_run, drilldown, metrics, growth_drilldown, text)
+    html = render_html_report(current_run, previous_run, drilldown, metrics, text)
 
     out_dir.mkdir(parents=True)
     log.info("Output directory: %s", out_dir)

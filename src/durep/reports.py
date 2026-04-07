@@ -578,11 +578,9 @@ def render_html_report(
     previous_run: NcduRun | None,
     drilldown: DrilldownNode,
     metrics: GlobalMetrics,
-    growth_drilldown: DrilldownNode | None,
     text_report: str,
 ) -> str:
     usage_data = json.dumps(drilldown_to_d3(drilldown))
-    growth_data = json.dumps(drilldown_to_d3(growth_drilldown)) if growth_drilldown else "null"
 
     uncompressed_bytes = format_bytes(metrics.total_uncompressed.total_size)
 
@@ -591,17 +589,6 @@ def render_html_report(
         scan_lines += (
             f"\n  <p>Previous scan: {html.escape(format_timestamp(previous_run.timestamp))}</p>"
         )
-
-    growth_section = ""
-    if growth_drilldown is not None:
-        growth_section = """
-    <h2>Growth since previous scan</h2>
-    <div id="growth-sunburst"></div>
-"""
-
-    growth_init = ""
-    if growth_drilldown is not None:
-        growth_init = "renderSunburst('growth-sunburst', growthData, formatBytes);"
 
     return f"""\
 <!doctype html>
@@ -660,16 +647,13 @@ def render_html_report(
 
   <h2>Disk usage</h2>
   <div id="usage-sunburst"></div>
-{growth_section}
   <h2>Text report</h2>
   <pre>{html.escape(text_report)}</pre>
 
   <script>
 {SUNBURST_JS}
   const usageData = {usage_data};
-  const growthData = {growth_data};
   renderSunburst('usage-sunburst', usageData, formatBytes);
-  {growth_init}
   </script>
 </body>
 </html>
