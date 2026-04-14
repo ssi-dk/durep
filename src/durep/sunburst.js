@@ -15,12 +15,20 @@ function renderSunburst(containerId, data, formatBytes) {
     return !!d.children && isCompressible(d);
   }
 
+  let cachedOutermostDepth = 0;
+  let cachedVisible = [];
+
+  function recomputeVisible() {
+    cachedVisible = visibleNodes(focus);
+    // Outermost depth is tracked by visibleNodes during its walk,
+    // unaffected by arc-size culling, so compressible highlighting stays
+    // on the real outermost ring even when all its nodes are sub-pixel.
+    cachedOutermostDepth = lastWalkMaxDepth;
+  }
+
   function isOutermostCompressibleDirectory(d) {
     if (!isCompressibleDir(d)) return false;
-    const relDepth = d.depth - focus.depth;
-    const visible = visibleNodes(focus);
-    const outermostDepth = d3.max(visible, node => node.depth - focus.depth);
-    return relDepth === outermostDepth;
+    return d.depth - focus.depth === cachedOutermostDepth;
   }
 
   function deltaColor(d) {
@@ -68,6 +76,7 @@ function renderSunburst(containerId, data, formatBytes) {
       d.y1 = 0;
     }
     d.current = d;
+    d.fullPath = d.ancestors().map(a => a.data.name).reverse().join("/");
   });
 
   const arc = d3.arc()
@@ -157,25 +166,45 @@ function renderSunburst(containerId, data, formatBytes) {
     return name.slice(0, maxChars - 1) + "\u2026";
   }
 
-  function fullPath(d) {
-    return d.ancestors().map(a => a.data.name).reverse().join("/");
+  function nodeKey(d) {
+    return d.fullPath;
   }
 
-  function nodeKey(d) {
-    return fullPath(d);
-  }
+  // Minimum arc angle (in the focus-relative coordinate system) below which
+  // a node is too small to see or click.  0.001 rad ≈ 0.06° ≈ sub-pixel.
+  const minArc = 0.001;
+
+  let lastWalkMaxDepth = 0;
 
   function visibleNodes(p) {
-    return p.descendants().filter(d => d !== p && d.depth - p.depth <= maxVisibleRings);
+    const result = [];
+    const maxDepth = p.depth + maxVisibleRings;
+    const pSpan = p.x1 - p.x0 || 1;
+    let walkMax = 0;
+    function walk(node) {
+      if (node !== p) {
+        const rd = node.depth - p.depth;
+        if (rd > walkMax) walkMax = rd;
+        if ((node.x1 - node.x0) / pSpan * 2 * Math.PI >= minArc) {
+          result.push(node);
+        }
+      }
+      if (node.children && node.depth < maxDepth) {
+        for (let i = 0; i < node.children.length; i++) walk(node.children[i]);
+      }
+    }
+    walk(p);
+    lastWalkMaxDepth = walkMax;
+    return result;
   }
 
-  function visiblePathNodes(p) {
-    if (p === root) return visibleNodes(p);
-    return [p].concat(visibleNodes(p));
+  function cachedVisiblePathNodes() {
+    if (focus === root) return cachedVisible;
+    return [focus].concat(cachedVisible);
   }
 
   function titleText(d) {
-    let t = fullPath(d) + "\n" + formatBytes(d.value);
+    let t = d.fullPath + "\n" + formatBytes(d.value);
     const dt = formatDelta(d);
     if (dt) t += "\n" + dt;
     return t;
@@ -190,7 +219,7 @@ function renderSunburst(containerId, data, formatBytes) {
 
   function updatePaths(t) {
     const paths = pathGroup.selectAll("path")
-      .data(visiblePathNodes(focus), nodeKey);
+      .data(cachedVisiblePathNodes(), nodeKey);
 
     const exiting = paths.exit();
     const entered = paths.enter().append("path")
@@ -245,7 +274,7 @@ function renderSunburst(containerId, data, formatBytes) {
 
   function updateLabels() {
     const labels = labelGroup.selectAll("text")
-      .data(visibleNodes(focus), nodeKey);
+      .data(cachedVisible, nodeKey);
 
     labels.exit().remove();
 
@@ -261,13 +290,14 @@ function renderSunburst(containerId, data, formatBytes) {
       .attr("fill-opacity", d => labelVisible(d) ? 1 : 0);
   }
 
+  recomputeVisible();
   updatePaths(null);
   updateLabels();
 
   function zoomTo(p) {
     focus = p;
 
-    breadcrumb.text(fullPath(p) + " (" + formatBytes(p.value) + ")");
+    breadcrumb.text(p.fullPath + " (" + formatBytes(p.value) + ")");
     deltaLine.text(formatDelta(p));
     resetBtn.style("display", p === root ? "none" : "inline-block");
 
@@ -299,6 +329,7 @@ function renderSunburst(containerId, data, formatBytes) {
       };
     });
 
+    recomputeVisible();
     const t = svg.transition().duration(500);
 
     updatePaths(t);
