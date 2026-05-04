@@ -290,7 +290,7 @@ function renderStackedArea(containerId, projectLegendId, filterPanelId, seriesDa
       const ownerSection = filterPanelContainer.append("section").attr("class", "filter-panel");
       ownerSection.append("h3").text("Legal owners");
       const ownerList = ownerSection.append("div").attr("class", "filter-list");
-      legalOwnerOrder.forEach(owner => {
+      legalOwnerOrder.sort().forEach(owner => {
         renderFilterOption(ownerList, owner, {type: "legalOwner", value: owner});
       });
     }
@@ -310,7 +310,7 @@ function renderStackedArea(containerId, projectLegendId, filterPanelId, seriesDa
       const leadSection = filterPanelContainer.append("section").attr("class", "filter-panel");
       leadSection.append("h3").text("Project leads");
       const leadList = leadSection.append("div").attr("class", "filter-list");
-      projectLeadOrder.forEach(lead => {
+      projectLeadOrder.sort().forEach(lead => {
         renderFilterOption(leadList, lead, {type: "projectLead", value: lead});
       });
     }

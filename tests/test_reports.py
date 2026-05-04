@@ -417,6 +417,8 @@ def test_render_overview_html_report_includes_metadata_filters() -> None:
     assert "Legal owners" in html
     assert "Project leads" in html
     assert "filter-panel" in html
+    assert "legalOwnerOrder.sort().forEach" in html
+    assert "projectLeadOrder.sort().forEach" in html
     assert '"legalOwners"' in html
     assert '"projectLeads"' in html
     assert '"Alice"' in html
