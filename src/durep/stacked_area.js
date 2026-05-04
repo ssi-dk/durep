@@ -1,6 +1,7 @@
-function renderStackedArea(containerId, legendId, seriesData, formatBytes) {
+function renderStackedArea(containerId, projectLegendId, filterPanelId, seriesData, formatBytes) {
   const container = d3.select("#" + containerId);
-  const legendContainer = d3.select("#" + legendId);
+  const projectLegendContainer = d3.select("#" + projectLegendId);
+  const filterPanelContainer = d3.select("#" + filterPanelId);
   const margin = {top: 20, right: 200, bottom: 40, left: 80};
   const width = 900 - margin.left - margin.right;
   const height = 400 - margin.top - margin.bottom;
@@ -73,13 +74,24 @@ function renderStackedArea(containerId, legendId, seriesData, formatBytes) {
   const yAxisRight = svg.append("g")
     .attr("transform", "translate(" + width + ",0)");
 
-  // Hidden project tracking and redraw
-  const hidden = new Set();
+  // Single active metadata filter. Null means all projects are visible.
+  let activeFilter = null;
+
+  function projectIsVisible(project) {
+    if (activeFilter == null) return true;
+    if (activeFilter.type === "legalOwner") {
+      return legalOwners[project] === activeFilter.value;
+    }
+    if (activeFilter.type === "projectLead") {
+      return (projectLeads[project] || []).includes(activeFilter.value);
+    }
+    return true;
+  }
 
   function updateStats() {
     let totalSize = 0, totalGrowth = 0, totalFiles = 0, totalCompressible = 0;
     projects.forEach((p, j) => {
-      if (hidden.has(p)) return;
+      if (!projectIsVisible(p)) return;
       totalSize += seriesData.latestBytes[j];
       totalGrowth += seriesData.latestBytes[j] - seriesData.earliestBytes[j];
       totalFiles += seriesData.files[j];
@@ -93,11 +105,11 @@ function renderStackedArea(containerId, legendId, seriesData, formatBytes) {
 
   function redraw() {
     updateStats();
-    const visibleKeys = sortedProjects.filter(p => !hidden.has(p));
+    const visibleKeys = sortedProjects.filter(projectIsVisible);
 
     const tableData = dates.map((d, i) => {
       const row = {date: d};
-      projects.forEach((p, j) => { row[p] = hidden.has(p) ? 0 : values[j][i]; });
+      projects.forEach((p, j) => { row[p] = projectIsVisible(p) ? values[j][i] : 0; });
       return row;
     });
 
@@ -153,8 +165,6 @@ function renderStackedArea(containerId, legendId, seriesData, formatBytes) {
     });
   }
 
-  redraw();
-
   // Tooltip
   const tooltip = container.append("div")
     .style("position", "absolute")
@@ -204,98 +214,123 @@ function renderStackedArea(containerId, legendId, seriesData, formatBytes) {
     tooltip.style("display", "none");
   }
 
-  // Group projects by owner (if available)
-  const owners = seriesData.owners;
-  const hasOwners = owners != null;
+  // Filter projects by metadata (if available)
+  const legalOwners = seriesData.legalOwners || {};
+  const projectLeads = seriesData.projectLeads || {};
+  const hasMetadata = seriesData.legalOwners != null || seriesData.projectLeads != null;
 
   function renderProjectButton(container, project) {
-    const btn = container.append("button")
-      .attr("type", "button")
+    const item = container.append("div")
       .attr("class", "legend-item")
-      .datum(project)
-      .on("click", function(event) {
-        event.preventDefault();
-        if (hidden.has(project)) hidden.delete(project);
-        else hidden.add(project);
-        syncLegend();
-        redraw();
-      });
+      .datum(project);
 
-    btn.append("span")
+    item.append("span")
       .attr("class", "legend-swatch")
       .style("background-color", color(project));
 
-    btn.append("span")
+    item.append("span")
       .attr("class", "legend-label")
       .text(project);
   }
 
-  if (hasOwners) {
-    const ownerOrder = [];
-    const ownerGroups = new Map();
-    sortedProjects.forEach(p => {
-      const owner = owners[p] || p;
-      if (!ownerGroups.has(owner)) {
-        ownerGroups.set(owner, []);
-        ownerOrder.push(owner);
-      }
-      ownerGroups.get(owner).push(p);
+  function renderProjectList() {
+    projectLegendContainer.selectAll("*").remove();
+    projectLegendContainer.append("h3").text("Projects");
+    const projectsDiv = projectLegendContainer.append("div").attr("class", "project-list");
+    sortedProjects.filter(projectIsVisible).forEach(project => {
+      renderProjectButton(projectsDiv, project);
     });
-
-    ownerOrder.forEach(owner => {
-      const groupProjects = ownerGroups.get(owner);
-      const group = legendContainer.append("div").attr("class", "owner-group");
-
-      group.append("button")
-        .attr("type", "button")
-        .attr("class", "owner-header")
-        .text(owner)
-        .on("click", function(event) {
-          event.preventDefault();
-          const allHidden = groupProjects.every(p => hidden.has(p));
-          groupProjects.forEach(p => {
-            if (allHidden) hidden.delete(p); else hidden.add(p);
-          });
-          syncLegend();
-          redraw();
-        });
-
-      const projectsDiv = group.append("div").attr("class", "owner-projects");
-      groupProjects.forEach(project => renderProjectButton(projectsDiv, project));
-    });
-  } else {
-    const projectsDiv = legendContainer.append("div").attr("class", "owner-projects");
-    sortedProjects.forEach(project => renderProjectButton(projectsDiv, project));
   }
 
-  function syncLegend() {
-    legendContainer.selectAll(".legend-item")
-      .classed("is-hidden", function() { return hidden.has(d3.select(this).datum()); });
-    if (hasOwners) {
-      legendContainer.selectAll(".owner-group").each(function() {
-        const grp = d3.select(this);
-        const items = grp.selectAll(".legend-item");
-        const allHidden = items.filter(function() {
-          return !hidden.has(d3.select(this).datum());
-        }).empty();
-        grp.select(".owner-header").classed("is-hidden", allHidden);
+  function countVisibleForFilter(filter) {
+    return sortedProjects.filter(p => {
+      if (filter.type === "legalOwner") return legalOwners[p] === filter.value;
+      return (projectLeads[p] || []).includes(filter.value);
+    }).length;
+  }
+
+  function renderFilterOption(container, label, filter) {
+    const btn = container.append("button")
+      .attr("type", "button")
+      .attr("class", "filter-option")
+      .datum(filter)
+      .on("click", function(event) {
+        event.preventDefault();
+        if (
+          activeFilter &&
+          activeFilter.type === filter.type &&
+          activeFilter.value === filter.value
+        ) {
+          activeFilter = null;
+        } else {
+          activeFilter = filter;
+        }
+        syncLegend();
+        redraw();
+      });
+
+    btn.append("span").text(label);
+    btn.append("span")
+      .attr("class", "filter-count")
+      .text(countVisibleForFilter(filter));
+  }
+
+  if (hasMetadata) {
+    const legalOwnerOrder = [];
+    const seenLegalOwners = new Set();
+    sortedProjects.forEach(p => {
+      const owner = legalOwners[p];
+      if (owner && !seenLegalOwners.has(owner)) {
+        seenLegalOwners.add(owner);
+        legalOwnerOrder.push(owner);
+      }
+    });
+
+    if (legalOwnerOrder.length > 0) {
+      const ownerSection = filterPanelContainer.append("section").attr("class", "filter-panel");
+      ownerSection.append("h3").text("Legal owners");
+      const ownerList = ownerSection.append("div").attr("class", "filter-list");
+      legalOwnerOrder.forEach(owner => {
+        renderFilterOption(ownerList, owner, {type: "legalOwner", value: owner});
       });
     }
+
+    const projectLeadOrder = [];
+    const seenProjectLeads = new Set();
+    sortedProjects.forEach(p => {
+      (projectLeads[p] || []).forEach(lead => {
+        if (!seenProjectLeads.has(lead)) {
+          seenProjectLeads.add(lead);
+          projectLeadOrder.push(lead);
+        }
+      });
+    });
+
+    if (projectLeadOrder.length > 0) {
+      const leadSection = filterPanelContainer.append("section").attr("class", "filter-panel");
+      leadSection.append("h3").text("Project leads");
+      const leadList = leadSection.append("div").attr("class", "filter-list");
+      projectLeadOrder.forEach(lead => {
+        renderFilterOption(leadList, lead, {type: "projectLead", value: lead});
+      });
+    }
+
+  }
+  renderProjectList();
+
+  function syncLegend() {
+    renderProjectList();
+    filterPanelContainer.selectAll(".filter-option")
+      .classed("is-active", function() {
+        const filter = d3.select(this).datum();
+        return activeFilter &&
+          activeFilter.type === filter.type &&
+          activeFilter.value === filter.value;
+      });
   }
 
   syncLegend();
-
-  d3.select("#legend-select-all").on("click", function() {
-    hidden.clear();
-    syncLegend();
-    redraw();
-  });
-
-  d3.select("#legend-deselect-all").on("click", function() {
-    sortedProjects.forEach(p => hidden.add(p));
-    syncLegend();
-    redraw();
-  });
+  redraw();
 }
 
 function formatBytes(n) {

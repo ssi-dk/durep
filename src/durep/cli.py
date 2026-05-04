@@ -46,23 +46,23 @@ class OverviewArgs:
     scans: list[Path]
     out_dir: Path
     jobs: int | None
-    metadata_csv: Path | None
+    metadata_tsv: Path | None
 
     @classmethod
     def from_namespace(cls, namespace: argparse.Namespace) -> OverviewArgs:
-        raw_csv = namespace.metadata_csv_path
+        raw_tsv = namespace.metadata_tsv_path
         return cls(
             scans=[Path(p) for p in namespace.scan],
             out_dir=Path(namespace.out_dir),
             jobs=namespace.jobs,
-            metadata_csv=Path(raw_csv) if raw_csv is not None else None,
+            metadata_tsv=Path(raw_tsv) if raw_tsv is not None else None,
         )
 
     def validate(self) -> None:
         if self.jobs is not None and self.jobs < 1:
             raise ValueError("jobs must be an integer > 0")
-        if self.metadata_csv is not None:
-            require_file(self.metadata_csv, "--metadata-csv-path")
+        if self.metadata_tsv is not None:
+            require_file(self.metadata_tsv, "--metadata-tsv-path")
         for scan in self.scans:
             require_file(scan, str(scan))
 
@@ -133,10 +133,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--out-dir", required=True, help="Output directory for generated reports."
     )
     overview.add_argument(
-        "--metadata-csv-path",
+        "--metadata-tsv-path",
         default=None,
-        help="CSV file with project and group columns for project ownership."
-        " If omitted, projects are listed individually without group headers.",
+        help="TSV file with project, legal_owner, and project_lead columns."
+        " If omitted, projects are listed individually without metadata filters.",
     )
 
     return parser
@@ -182,7 +182,7 @@ def execute_detail(args: DetailArgs) -> None:
 def execute_overview(args: OverviewArgs) -> None:
     jobs = effective_jobs(args.jobs, len(args.scans))
     samples = load_overview_samples(args.scans, jobs)
-    write_overview_reports(args.out_dir, samples, args.metadata_csv)
+    write_overview_reports(args.out_dir, samples, args.metadata_tsv)
 
 
 def run(argv: Sequence[str] | None = None) -> int:
