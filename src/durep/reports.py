@@ -13,7 +13,7 @@ from durep.analytics import (
     ProjectSample,
     ProjectTimeSeries,
 )
-from durep.metadata import Owner, ProjectName
+from durep.metadata import ProjectMetadata, ProjectName
 from durep.ncdu import NcduDir, NcduRun, path_str
 
 _PKG_DIR = Path(__file__).parent
@@ -323,7 +323,7 @@ def render_html_report(
 def render_overview_text_report(
     series: list[ProjectTimeSeries],
     samples: list[ProjectSample],
-    owners: dict[ProjectName, Owner] | None,
+    metadata: dict[ProjectName, ProjectMetadata] | None,
 ) -> str:
     lines: list[str] = []
     lines.append("Disk usage overview")
@@ -335,9 +335,11 @@ def render_overview_text_report(
         return "\n".join(lines)
 
     # Build a table: one row per project
-    rows: list[tuple[str, str | None, int, int, int, str, int]] = []
+    rows: list[tuple[str, str | None, str, int, int, int, str, int]] = []
     for ts in series:
-        owner = owners.get(ProjectName(ts.project), Owner(ts.project)) if owners else None
+        project_metadata = metadata.get(ProjectName(ts.project)) if metadata else None
+        owner = project_metadata.legal_owner if project_metadata else None
+        leads = ", ".join(project_metadata.project_leads) if project_metadata else ""
 
         # Find earliest and latest non-zero values
         earliest = 0
@@ -352,37 +354,39 @@ def render_overview_text_report(
 
         compressible = ts.uncompressed_values[-1].total_size if ts.uncompressed_values else 0
 
-        rows.append((ts.project, owner, latest, earliest, growth, pct, compressible))
+        rows.append((ts.project, owner, leads, latest, earliest, growth, pct, compressible))
 
-    # Sort by owner then latest size descending (if owners), else just by latest size descending
-    if owners:
-        rows.sort(key=lambda r: (r[1] or "", -r[2]))
+    # Sort by legal owner then latest size descending (if metadata), else by latest size descending.
+    if metadata:
+        rows.sort(key=lambda r: (r[1] or "", -r[3]))
     else:
-        rows.sort(key=lambda r: -r[2])
+        rows.sort(key=lambda r: -r[3])
 
-    if owners:
-        # Table header with group column
+    if metadata:
+        # Table header with metadata columns
         lines.append(
-            f"  {'Project':<40s} {'Group':<15s} {'Latest':>10s} {'Earliest':>10s}"
-            f" {'Growth':>9s} {'%':>8s} {'Compressible':>10s}"
+            f"  {'Project':<35s} {'Legal owner':<15s} {'Project lead':<20s}"
+            f" {'Latest':>10s} {'Earliest':>10s} {'Growth':>9s} {'%':>8s}"
+            f" {'Compressible':>10s}"
         )
-        for project, owner, latest, earliest, growth, pct, compressible in rows:
-            proj_display = project if len(project) <= 40 else "..." + project[-(40 - 3) :]
+        for project, owner, leads, latest, earliest, growth, pct, compressible in rows:
+            proj_display = project if len(project) <= 35 else "..." + project[-(35 - 3) :]
             owner_display = (
                 (owner or "") if len(owner or "") <= 15 else "..." + (owner or "")[-(15 - 3) :]
             )
+            leads_display = leads if len(leads) <= 20 else "..." + leads[-(20 - 3) :]
             lines.append(
-                f"  {proj_display:<40s} {owner_display:<15s}"
+                f"  {proj_display:<35s} {owner_display:<15s} {leads_display:<20s}"
                 f" {format_bytes(latest):>10s} {format_bytes(earliest):>10s}"
                 f" {format_bytes(growth):>9s} {pct:>8s} {format_bytes(compressible):>10s}"
             )
     else:
-        # Table header without group column
+        # Table header without metadata columns
         lines.append(
             f"  {'Project':<40s} {'Latest':>10s} {'Earliest':>10s}"
             f" {'Growth':>9s} {'%':>8s} {'Compressible':>10s}"
         )
-        for project, _owner, latest, earliest, growth, pct, compressible in rows:
+        for project, _owner, _leads, latest, earliest, growth, pct, compressible in rows:
             proj_display = project if len(project) <= 40 else "..." + project[-(40 - 3) :]
             lines.append(
                 f"  {proj_display:<40s}"
@@ -410,7 +414,7 @@ def render_overview_html_report(
     series: list[ProjectTimeSeries],
     text_report: str,
     samples: list[ProjectSample],
-    owners: dict[ProjectName, Owner] | None,
+    metadata: dict[ProjectName, ProjectMetadata] | None,
 ) -> str:
     if not series:
         dates: list[str] = []
@@ -453,10 +457,21 @@ def render_overview_html_report(
             "latestBytes": per_project_latest,
             "earliestBytes": per_project_earliest,
             "compressible": per_project_compressible,
-            "owners": {
-                s.project: owners.get(ProjectName(s.project), Owner(s.project)) for s in series
+            "legalOwners": {
+                s.project: project_metadata.legal_owner
+                for s in series
+                if (project_metadata := metadata.get(ProjectName(s.project))) is not None
+                and project_metadata.legal_owner is not None
             }
-            if owners
+            if metadata
+            else None,
+            "projectLeads": {
+                s.project: project_metadata.project_leads
+                for s in series
+                if (project_metadata := metadata.get(ProjectName(s.project))) is not None
+                and project_metadata.project_leads
+            }
+            if metadata
             else None,
         }
     )
@@ -475,38 +490,31 @@ def render_overview_html_report(
     .card {{ background: #f5f5f5; border-radius: 8px; padding: 1em 1.5em; min-width: 150px; }}
     .card .label {{ font-size: 0.85em; color: #666; }}
     .card .value {{ font-size: 1.4em; font-weight: bold; }}
+    .overview-filters {{ display: flex; gap: 1em; align-items: stretch; flex-wrap: wrap; margin-bottom: 1.5em; }}
+    .overview-filters:empty {{ display: none; }}
+    .filter-panel {{ flex: 1 1 280px; min-width: 240px; max-height: 11rem; overflow-y: auto; padding: 0.75em; border: 1px solid #ddd; border-radius: 8px; }}
+    .filter-panel h3 {{ margin: 0 0 0.5em; font-size: 1em; }}
     .overview-layout {{ display: flex; gap: 1.5em; align-items: flex-start; flex-wrap: wrap; }}
     .overview-plot {{ flex: 1 1 900px; min-width: 0; }}
-    .overview-legend {{ flex: 0 0 240px; max-height: 400px; overflow-y: auto; padding-right: 0.25em; }}
-    .overview-legend h3 {{ margin: 0; font-size: 1em; }}
-    .legend-header {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75em; }}
-    .legend-actions {{ display: flex; gap: 0.3em; }}
-    .legend-action-btn {{
-      border: 1px solid #ccc; background: #f5f5f5; border-radius: 4px;
-      padding: 0.15em 0.5em; font: inherit; font-size: 0.8em; color: #555;
-      cursor: pointer;
+    .overview-legend {{ flex: 0 0 300px; max-height: 400px; overflow-y: auto; padding-right: 0.25em; }}
+    .overview-legend h3 {{ margin: 0 0 0.5em; font-size: 1em; }}
+    .filter-list {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.15em 0.5em; }}
+    .filter-option {{
+      display: flex; align-items: center; justify-content: space-between; gap: 0.5em;
+      width: 100%; padding: 0.35em 0.45em; border: 0; background: transparent;
+      border-radius: 6px; cursor: pointer; font: inherit; color: inherit; text-align: left;
     }}
-    .legend-action-btn:hover {{ background: #e0e0e0; }}
+    .filter-option:hover {{ background: #f0f0f0; }}
+    .filter-option.is-active {{ background: #e8e8e8; font-weight: bold; }}
+    .filter-count {{ color: #666; font-size: 0.85em; font-weight: normal; }}
     .legend-item {{
       display: flex; align-items: center; gap: 0.6em; width: 100%;
-      padding: 0.3em 0.4em; border: 0; background: transparent; text-align: left;
-      cursor: pointer; border-radius: 6px; font: inherit; color: inherit;
+      padding: 0.25em 0.4em; border: 0; background: transparent; text-align: left;
+      border-radius: 6px; font: inherit; color: inherit;
     }}
-    .legend-item:hover {{ background: #f0f0f0; }}
-    .legend-item.is-hidden {{ color: #999; text-decoration: line-through; }}
     .legend-swatch {{ width: 14px; height: 14px; border-radius: 2px; flex: 0 0 14px; }}
-    .legend-item.is-hidden .legend-swatch {{ opacity: 0.2; }}
     .legend-label {{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-    .owner-group {{ margin-bottom: 0.5em; }}
-    .owner-header {{
-      display: flex; align-items: center; gap: 0.5em; width: 100%;
-      padding: 0.3em 0.4em; border: 0; background: #e8e8e8;
-      cursor: pointer; border-radius: 6px; font: inherit; font-weight: bold;
-      font-size: 0.9em; color: #444;
-    }}
-    .owner-header:hover {{ background: #ddd; }}
-    .owner-header.is-hidden {{ color: #999; text-decoration: line-through; background: transparent; }}
-    .owner-projects {{ padding-left: 0.5em; }}
+    .project-list {{ margin-top: 0.25em; }}
     h1 {{ margin-bottom: 0.3em; }}
     h2 {{ margin-top: 2em; }}
     pre {{ background: #f5f5f5; padding: 1.5em; border-radius: 8px; overflow-x: auto;
@@ -538,18 +546,12 @@ def render_overview_html_report(
   </div>
 
   <h2>Size over time</h2>
+  <div class="overview-filters" id="overview-filters"></div>
   <div class="overview-layout">
     <div class="overview-plot">
       <div id="overview-chart"></div>
     </div>
     <aside class="overview-legend">
-      <div class="legend-header">
-        <h3>Projects</h3>
-        <span class="legend-actions">
-          <button type="button" id="legend-select-all" class="legend-action-btn">all</button>
-          <button type="button" id="legend-deselect-all" class="legend-action-btn">none</button>
-        </span>
-      </div>
       <div id="overview-legend"></div>
     </aside>
   </div>
@@ -560,7 +562,7 @@ def render_overview_html_report(
   <script>
 {STACKED_AREA_JS}
   const chartData = {chart_data};
-  renderStackedArea('overview-chart', 'overview-legend', chartData, formatBytes);
+  renderStackedArea('overview-chart', 'overview-legend', 'overview-filters', chartData, formatBytes);
   </script>
 </body>
 </html>

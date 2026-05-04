@@ -1,65 +1,82 @@
 from __future__ import annotations
 
-import csv
 import logging
 from collections.abc import Sequence
+from csv import DictReader
+from dataclasses import dataclass
 from pathlib import Path
 from typing import NewType
 
 log = logging.getLogger("durep")
 
 DISPLAY_NAME_COLUMN = "project"
-LEGAL_OWNER_COLUMN = "group"
+LEGAL_OWNER_COLUMN = "legal_owner"
+PROJECT_LEAD_COLUMN = "project_lead"
 
 ProjectName = NewType("ProjectName", str)
 Owner = NewType("Owner", str)
+ProjectLead = NewType("ProjectLead", str)
 
 
-def load_project_owners(csv_path: Path) -> dict[ProjectName, Owner | None]:
-    """Parse a metadata CSV and return a mapping of project display name to legal owner.
+@dataclass(frozen=True, slots=True)
+class ProjectMetadata:
+    legal_owner: Owner | None
+    project_leads: tuple[ProjectLead, ...] = ()
 
-    Raises ValueError if the required columns (project, group) are missing.
-    Returns None for projects whose group field is missing or blank.
+
+def split_project_leads(raw: str) -> tuple[ProjectLead, ...]:
+    return tuple(ProjectLead(part.strip()) for part in raw.split(",") if part.strip())
+
+
+def load_project_metadata(tsv_path: Path) -> dict[ProjectName, ProjectMetadata]:
+    """Parse a metadata TSV and return metadata by project display name.
+
+    The TSV must contain project, legal_owner, and project_lead columns. A
+    blank legal_owner means the project has no legal owner. A blank
+    project_lead means no project leads.
     """
-    with csv_path.open(newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
+    with tsv_path.open(newline="", encoding="utf-8") as f:
+        reader = DictReader(f, delimiter="\t")
         if reader.fieldnames is None:
             raise ValueError(
-                f"metadata CSV {csv_path} is empty or has no header row; "
+                f"metadata TSV {tsv_path} is empty or has no header row; "
                 f"expected columns: {DISPLAY_NAME_COLUMN}, {LEGAL_OWNER_COLUMN}"
             )
-        missing = {DISPLAY_NAME_COLUMN, LEGAL_OWNER_COLUMN} - set(reader.fieldnames)
+        missing = {DISPLAY_NAME_COLUMN, LEGAL_OWNER_COLUMN, PROJECT_LEAD_COLUMN} - set(
+            reader.fieldnames
+        )
         if missing:
             raise ValueError(
-                f"metadata CSV {csv_path} is missing required column(s): {', '.join(sorted(missing))}"
+                f"metadata TSV {tsv_path} is missing required column(s): {', '.join(sorted(missing))}"
             )
-        result: dict[ProjectName, Owner | None] = {}
+
+        result: dict[ProjectName, ProjectMetadata] = {}
         for row in reader:
             name = (row[DISPLAY_NAME_COLUMN] or "").strip()
-            raw_owner = (row[LEGAL_OWNER_COLUMN] or "").strip()
             if name:
-                result[ProjectName(name)] = Owner(raw_owner) if raw_owner else None
+                raw_owner = (row[LEGAL_OWNER_COLUMN] or "").strip()
+                raw_leads = (row[PROJECT_LEAD_COLUMN] or "").strip()
+                result[ProjectName(name)] = ProjectMetadata(
+                    legal_owner=Owner(raw_owner) if raw_owner else None,
+                    project_leads=split_project_leads(raw_leads),
+                )
         return result
 
 
-def resolve_project_owners(
+def resolve_project_metadata(
     projects: Sequence[ProjectName],
-    csv_owners: dict[ProjectName, Owner | None],
-) -> dict[ProjectName, Owner]:
-    """Return a project-to-owner mapping for the given project names.
-
-    Projects not in csv_owners, or whose owner is None, fall back to using
-    the project name as the owner, with a warning emitted to stderr.
-    """
-    owners: dict[ProjectName, Owner] = {}
+    tsv_metadata: dict[ProjectName, ProjectMetadata],
+) -> dict[ProjectName, ProjectMetadata]:
+    """Return metadata for the given project names, warning for missing entries."""
+    metadata: dict[ProjectName, ProjectMetadata] = {}
     for project in projects:
-        raw_owner = csv_owners.get(project)
-        if raw_owner is not None:
-            owners[project] = raw_owner
+        raw_metadata = tsv_metadata.get(project)
+        if raw_metadata is not None:
+            metadata[project] = raw_metadata
         else:
             log.warning(
-                "Project %r has no legal owner in metadata CSV; using project name as owner",
+                "Project %r has no metadata in metadata TSV",
                 project,
             )
-            owners[project] = Owner(project)
-    return owners
+            metadata[project] = ProjectMetadata(legal_owner=None, project_leads=())
+    return metadata

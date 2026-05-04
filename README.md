@@ -13,7 +13,8 @@ durep has two subcommands:
 * `detail`: Takes an ncdu JSON file and creates a detailed report of disk usage with an interactive sunburst diagram.
   Optionally takes a second JSON file which must be of the same top-level directory at a different time, in which case it provides information about disk usage changes between the two.
 * `overview`: Takes many ncdu JSON files and creates a report with total disk usage per top-level directory over time.
-  Also takes a CSV file with columns `project,group` mapping the top-level directory basename (project) to an arbitrary group.
+  Also takes a TSV file with columns `project`, `legal_owner`, and `project_lead` for filtering projects in the HTML overview.
+  Multiple project leads in `project_lead` are comma-separated.
 
 #### Examples
 Generate a detailed report from one JSON file
@@ -28,5 +29,5 @@ durep detail --out-dir output report_20260112.json report_20260329.json
 
 Generate an overview of a large collection of NCDU reports
 ```bash
-durep overview ncdu_reports/*json --out-dir output --metadata-csv-path metadata.csv
+durep overview ncdu_reports/*json --out-dir output --metadata-tsv-path metadata.tsv
 ```

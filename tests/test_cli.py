@@ -33,14 +33,14 @@ def write_ncdu(
     return path
 
 
-def write_metadata_csv(tmp_path: Path, projects: list[str]) -> Path:
-    """Write a metadata CSV with each project as its own owner."""
-    csv_path = tmp_path / "metadata.csv"
-    lines = ["project,group"]
+def write_metadata_tsv(tmp_path: Path, projects: list[str]) -> Path:
+    """Write a metadata TSV with each project as its own legal owner."""
+    tsv_path = tmp_path / "metadata.tsv"
+    lines = ["project\tlegal_owner\tproject_lead"]
     for p in projects:
-        lines.append(f"{p},{p}")
-    csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return csv_path
+        lines.append(f"{p}\t{p}\t")
+    tsv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return tsv_path
 
 
 def normalize_generated(text: str) -> str:
@@ -139,7 +139,7 @@ def test_run_requires_subcommand(tmp_path: Path) -> None:
 
 def test_overview_single_scan(tmp_path: Path) -> None:
     scan = write_ncdu(tmp_path / "scan.json")
-    meta = write_metadata_csv(tmp_path, ["data"])
+    meta = write_metadata_tsv(tmp_path, ["data"])
     out_dir = tmp_path / "out"
 
     exit_code = run(
@@ -148,7 +148,7 @@ def test_overview_single_scan(tmp_path: Path) -> None:
             str(scan),
             "--out-dir",
             str(out_dir),
-            "--metadata-csv-path",
+            "--metadata-tsv-path",
             str(meta),
         ]
     )
@@ -162,7 +162,7 @@ def test_overview_multiple_scans(tmp_path: Path) -> None:
     scan_a = write_ncdu(tmp_path / "a.json", timestamp=1700000000, root_name="/proj_a", dsize=500)
     scan_b = write_ncdu(tmp_path / "b.json", timestamp=1700086400, root_name="/proj_b", dsize=300)
     scan_c = write_ncdu(tmp_path / "c.json", timestamp=1700172800, root_name="/proj_a", dsize=600)
-    meta = write_metadata_csv(tmp_path, ["proj_a", "proj_b"])
+    meta = write_metadata_tsv(tmp_path, ["proj_a", "proj_b"])
     out_dir = tmp_path / "out"
 
     exit_code = run(
@@ -173,7 +173,7 @@ def test_overview_multiple_scans(tmp_path: Path) -> None:
             str(scan_c),
             "--out-dir",
             str(out_dir),
-            "--metadata-csv-path",
+            "--metadata-tsv-path",
             str(meta),
         ]
     )
@@ -188,7 +188,7 @@ def test_overview_multiple_scans_with_jobs_2(tmp_path: Path) -> None:
     scan_a = write_ncdu(tmp_path / "a.json", timestamp=1700000000, root_name="/proj_a", dsize=500)
     scan_b = write_ncdu(tmp_path / "b.json", timestamp=1700086400, root_name="/proj_b", dsize=300)
     scan_c = write_ncdu(tmp_path / "c.json", timestamp=1700172800, root_name="/proj_a", dsize=600)
-    meta = write_metadata_csv(tmp_path, ["proj_a", "proj_b"])
+    meta = write_metadata_tsv(tmp_path, ["proj_a", "proj_b"])
     out_dir = tmp_path / "out"
 
     exit_code = run(
@@ -201,7 +201,7 @@ def test_overview_multiple_scans_with_jobs_2(tmp_path: Path) -> None:
             "2",
             "--out-dir",
             str(out_dir),
-            "--metadata-csv-path",
+            "--metadata-tsv-path",
             str(meta),
         ]
     )
@@ -215,7 +215,7 @@ def test_overview_jobs_1_matches_jobs_2_output(tmp_path: Path) -> None:
     scan_a = write_ncdu(tmp_path / "a.json", timestamp=1700000000, root_name="/proj_a", dsize=500)
     scan_b = write_ncdu(tmp_path / "b.json", timestamp=1700086400, root_name="/proj_b", dsize=300)
     scan_c = write_ncdu(tmp_path / "c.json", timestamp=1700172800, root_name="/proj_a", dsize=600)
-    meta = write_metadata_csv(tmp_path, ["proj_a", "proj_b"])
+    meta = write_metadata_tsv(tmp_path, ["proj_a", "proj_b"])
 
     out_serial = tmp_path / "out_serial"
     run(
@@ -228,7 +228,7 @@ def test_overview_jobs_1_matches_jobs_2_output(tmp_path: Path) -> None:
             "1",
             "--out-dir",
             str(out_serial),
-            "--metadata-csv-path",
+            "--metadata-tsv-path",
             str(meta),
         ]
     )
@@ -244,7 +244,7 @@ def test_overview_jobs_1_matches_jobs_2_output(tmp_path: Path) -> None:
             "2",
             "--out-dir",
             str(out_parallel),
-            "--metadata-csv-path",
+            "--metadata-tsv-path",
             str(meta),
         ]
     )
@@ -259,7 +259,7 @@ def test_overview_jobs_1_matches_jobs_2_output(tmp_path: Path) -> None:
 
 
 def test_overview_rejects_missing_file(tmp_path: Path) -> None:
-    meta = write_metadata_csv(tmp_path, [])
+    meta = write_metadata_tsv(tmp_path, [])
     with pytest.raises(FileNotFoundError):
         run(
             [
@@ -267,7 +267,7 @@ def test_overview_rejects_missing_file(tmp_path: Path) -> None:
                 str(tmp_path / "missing.json"),
                 "--out-dir",
                 str(tmp_path / "out"),
-                "--metadata-csv-path",
+                "--metadata-tsv-path",
                 str(meta),
             ]
         )
@@ -285,8 +285,8 @@ def test_overview_rejects_jobs_zero(tmp_path: Path) -> None:
                 "0",
                 "--out-dir",
                 str(tmp_path / "out"),
-                "--metadata-csv-path",
-                str(tmp_path / "meta.csv"),
+                "--metadata-tsv-path",
+                str(tmp_path / "meta.tsv"),
             ]
         )
 
@@ -303,8 +303,8 @@ def test_overview_rejects_negative_jobs(tmp_path: Path) -> None:
                 "-1",
                 "--out-dir",
                 str(tmp_path / "out"),
-                "--metadata-csv-path",
-                str(tmp_path / "meta.csv"),
+                "--metadata-tsv-path",
+                str(tmp_path / "meta.tsv"),
             ]
         )
 
@@ -318,7 +318,7 @@ def test_overview_rejects_missing_timestamp(tmp_path: Path) -> None:
     ]
     scan = tmp_path / "no_ts.json"
     scan.write_text(json.dumps(no_ts), encoding="utf-8")
-    meta = write_metadata_csv(tmp_path, ["data"])
+    meta = write_metadata_tsv(tmp_path, ["data"])
 
     with pytest.raises(ValueError, match="timestamp"):
         run(
@@ -327,7 +327,7 @@ def test_overview_rejects_missing_timestamp(tmp_path: Path) -> None:
                 str(scan),
                 "--out-dir",
                 str(tmp_path / "out"),
-                "--metadata-csv-path",
+                "--metadata-tsv-path",
                 str(meta),
             ]
         )
@@ -339,7 +339,7 @@ def test_overview_parallel_preserves_parse_error_details(tmp_path: Path) -> None
     bad.write_text(
         '[1, 2, {"progname": "ncdu", "timestamp": 1700000000}, {"name": }]', encoding="utf-8"
     )
-    meta = write_metadata_csv(tmp_path, ["data"])
+    meta = write_metadata_tsv(tmp_path, ["data"])
 
     with pytest.raises(ValueError, match=r"Invalid NCDU JSON file at .*parse error:"):
         run(
@@ -351,13 +351,13 @@ def test_overview_parallel_preserves_parse_error_details(tmp_path: Path) -> None
                 "2",
                 "--out-dir",
                 str(tmp_path / "out"),
-                "--metadata-csv-path",
+                "--metadata-tsv-path",
                 str(meta),
             ]
         )
 
 
-def test_overview_without_metadata_csv(tmp_path: Path) -> None:
+def test_overview_without_metadata_tsv(tmp_path: Path) -> None:
     scan = write_ncdu(tmp_path / "scan.json")
     out_dir = tmp_path / "out"
 
@@ -375,7 +375,7 @@ def test_overview_without_metadata_csv(tmp_path: Path) -> None:
     assert (out_dir / "report.html").is_file()
 
 
-def test_overview_without_metadata_csv_omits_group_column(tmp_path: Path) -> None:
+def test_overview_without_metadata_tsv_omits_metadata_columns(tmp_path: Path) -> None:
     scan = write_ncdu(tmp_path / "scan.json")
     out_dir = tmp_path / "out"
 
@@ -389,11 +389,12 @@ def test_overview_without_metadata_csv_omits_group_column(tmp_path: Path) -> Non
     )
 
     text = (out_dir / "report.txt").read_text(encoding="utf-8")
-    assert "Group" not in text
+    assert "Legal owner" not in text
+    assert "Project lead" not in text
     assert "data" in text
 
 
-def test_overview_without_metadata_csv_html_has_no_owner_groups(tmp_path: Path) -> None:
+def test_overview_without_metadata_tsv_html_has_no_metadata_filters(tmp_path: Path) -> None:
     scan = write_ncdu(tmp_path / "scan.json")
     out_dir = tmp_path / "out"
 
@@ -407,11 +408,12 @@ def test_overview_without_metadata_csv_html_has_no_owner_groups(tmp_path: Path) 
     )
 
     html = (out_dir / "report.html").read_text(encoding="utf-8")
-    assert '"owners": null' in html
+    assert '"legalOwners": null' in html
+    assert '"projectLeads": null' in html
     assert "legend-item" in html
 
 
-def test_overview_rejects_missing_metadata_csv(tmp_path: Path) -> None:
+def test_overview_rejects_missing_metadata_tsv(tmp_path: Path) -> None:
     scan = write_ncdu(tmp_path / "scan.json")
     with pytest.raises(FileNotFoundError):
         run(
@@ -420,16 +422,16 @@ def test_overview_rejects_missing_metadata_csv(tmp_path: Path) -> None:
                 str(scan),
                 "--out-dir",
                 str(tmp_path / "out"),
-                "--metadata-csv-path",
-                str(tmp_path / "nonexistent.csv"),
+                "--metadata-tsv-path",
+                str(tmp_path / "nonexistent.tsv"),
             ]
         )
 
 
-def test_overview_rejects_bad_metadata_csv_columns(tmp_path: Path) -> None:
+def test_overview_rejects_bad_metadata_tsv_columns(tmp_path: Path) -> None:
     scan = write_ncdu(tmp_path / "scan.json")
-    bad_csv = tmp_path / "bad.csv"
-    bad_csv.write_text("Name,Owner\nproj,Alice\n", encoding="utf-8")
+    bad_tsv = tmp_path / "bad.tsv"
+    bad_tsv.write_text("name\towner\nproj\tAlice\n", encoding="utf-8")
     with pytest.raises(ValueError, match="missing required column"):
         run(
             [
@@ -437,8 +439,8 @@ def test_overview_rejects_bad_metadata_csv_columns(tmp_path: Path) -> None:
                 str(scan),
                 "--out-dir",
                 str(tmp_path / "out"),
-                "--metadata-csv-path",
-                str(bad_csv),
+                "--metadata-tsv-path",
+                str(bad_tsv),
             ]
         )
 

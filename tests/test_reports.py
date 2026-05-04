@@ -8,7 +8,7 @@ from durep.analytics import (
     build_drilldown_tree,
     compute_directory_deltas,
 )
-from durep.metadata import Owner, ProjectName
+from durep.metadata import Owner, ProjectLead, ProjectMetadata, ProjectName
 from durep.ncdu import NcduDir, UncompressedStats
 from durep.reports import (
     drilldown_to_d3,
@@ -21,6 +21,14 @@ from test_analytics import make_dir, make_file, make_sample
 
 PN = ProjectName
 OW = Owner
+PL = ProjectLead
+
+
+def MD(owner: str | None, *leads: str) -> ProjectMetadata:
+    return ProjectMetadata(
+        OW(owner) if owner is not None else None,
+        tuple(PL(lead) for lead in leads),
+    )
 
 
 def d3_leaf_sum(node: dict) -> int:
@@ -77,7 +85,7 @@ def test_render_overview_html_report_uses_decimal_byte_formatter() -> None:
             measured=[True],
         )
     ]
-    owners = {PN("proj_a"): OW("Alice")}
+    owners = {PN("proj_a"): MD("Alice")}
 
     html = render_overview_html_report(
         series, render_overview_text_report(series, samples, owners), samples, owners
@@ -161,7 +169,7 @@ def test_render_overview_text_report_caps_extreme_growth_percentage() -> None:
         )
     ]
 
-    report = render_overview_text_report(series, samples, {PN("/proj"): OW("/proj")})
+    report = render_overview_text_report(series, samples, {PN("/proj"): MD("/proj")})
 
     assert "> 1000%" in report
     assert "+1000100.0%" not in report
@@ -204,7 +212,7 @@ def test_render_overview_html_report_shows_total_files_card() -> None:
             measured=[False, True],
         ),
     ]
-    owners = {PN("proj_a"): OW("Alice"), PN("proj_b"): OW("Bob")}
+    owners = {PN("proj_a"): MD("Alice"), PN("proj_b"): MD("Bob")}
 
     html = render_overview_html_report(
         series, render_overview_text_report(series, samples, owners), samples, owners
@@ -235,7 +243,7 @@ def test_render_overview_html_report_includes_project_history_tooltip_logic() ->
             measured=[True, False],
         )
     ]
-    owners = {PN("proj_a"): OW("Alice")}
+    owners = {PN("proj_a"): MD("Alice")}
 
     html = render_overview_html_report(
         series, render_overview_text_report(series, samples, owners), samples, owners
@@ -269,7 +277,7 @@ def test_render_overview_html_report_includes_scrollable_html_legend() -> None:
         )
         for i in range(30)
     ]
-    owners = {PN(f"proj_{i}"): OW(f"owner_{i % 5}") for i in range(30)}
+    owners = {PN(f"proj_{i}"): MD(f"owner_{i % 5}") for i in range(30)}
 
     html = render_overview_html_report(
         series, render_overview_text_report(series, samples, owners), samples, owners
@@ -277,9 +285,11 @@ def test_render_overview_html_report_includes_scrollable_html_legend() -> None:
 
     assert 'class="overview-legend"' in html
     assert 'id="overview-legend"' in html
+    assert 'class="overview-filters"' in html
+    assert 'id="overview-filters"' in html
     assert "max-height:400px" in html or "max-height: 400px" in html
     assert "overflow-y:auto" in html or "overflow-y: auto" in html
-    assert "renderStackedArea('overview-chart', 'overview-legend'" in html
+    assert "renderStackedArea('overview-chart', 'overview-legend', 'overview-filters'" in html
 
 
 def test_render_overview_html_report_sorts_stack_by_latest_size() -> None:
@@ -319,7 +329,7 @@ def test_render_overview_html_report_sorts_stack_by_latest_size() -> None:
             measured=[True],
         ),
     ]
-    owners = {PN("proj_a"): OW("Alice"), PN("proj_b"): OW("Bob")}
+    owners = {PN("proj_a"): MD("Alice"), PN("proj_b"): MD("Bob")}
 
     html = render_overview_html_report(
         series, render_overview_text_report(series, samples, owners), samples, owners
@@ -351,7 +361,7 @@ def test_render_overview_html_report_includes_right_y_axis() -> None:
             measured=[True],
         )
     ]
-    owners = {PN("proj_a"): OW("Alice")}
+    owners = {PN("proj_a"): MD("Alice")}
 
     html = render_overview_html_report(
         series, render_overview_text_report(series, samples, owners), samples, owners
@@ -361,7 +371,7 @@ def test_render_overview_html_report_includes_right_y_axis() -> None:
     assert "d3.axisRight(y)" in html
 
 
-def test_render_overview_html_report_includes_owner_grouping() -> None:
+def test_render_overview_html_report_includes_metadata_filters() -> None:
     samples = [
         ProjectSample(
             project="proj_a",
@@ -398,13 +408,63 @@ def test_render_overview_html_report_includes_owner_grouping() -> None:
             measured=[True],
         ),
     ]
-    owners = {PN("proj_a"): OW("Alice"), PN("proj_b"): OW("Alice")}
+    owners = {PN("proj_a"): MD("Alice", "Carol"), PN("proj_b"): MD("Alice", "Dan")}
 
     html = render_overview_html_report(
         series, render_overview_text_report(series, samples, owners), samples, owners
     )
 
-    assert "owner-group" in html
-    assert "owner-header" in html
-    assert '"owners"' in html
+    assert "Legal owners" in html
+    assert "Project leads" in html
+    assert "filter-panel" in html
+    assert '"legalOwners"' in html
+    assert '"projectLeads"' in html
     assert '"Alice"' in html
+    assert '"Carol"' in html
+
+
+def test_render_overview_html_report_projects_list_only_shows_visible_projects() -> None:
+    samples = [
+        ProjectSample(
+            project="proj_a",
+            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+            date=datetime.date(2024, 1, 1),
+            total_bytes=100,
+            total_files=1,
+            total_directories=1,
+            uncompressed=UncompressedStats.zero(),
+        ),
+        ProjectSample(
+            project="proj_b",
+            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+            date=datetime.date(2024, 1, 1),
+            total_bytes=200,
+            total_files=2,
+            total_directories=1,
+            uncompressed=UncompressedStats.zero(),
+        ),
+    ]
+    series = [
+        ProjectTimeSeries(
+            project="proj_a",
+            dates=[datetime.date(2024, 1, 1)],
+            bytes_values=[100],
+            uncompressed_values=[UncompressedStats.zero()],
+            measured=[True],
+        ),
+        ProjectTimeSeries(
+            project="proj_b",
+            dates=[datetime.date(2024, 1, 1)],
+            bytes_values=[200],
+            uncompressed_values=[UncompressedStats.zero()],
+            measured=[True],
+        ),
+    ]
+    owners = {PN("proj_a"): MD("Alice"), PN("proj_b"): MD("Bob")}
+
+    html = render_overview_html_report(
+        series, render_overview_text_report(series, samples, owners), samples, owners
+    )
+
+    assert "sortedProjects.filter(projectIsVisible).forEach" in html
+    assert "legend-item.is-hidden" not in html
