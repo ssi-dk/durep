@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from durep import __version__
 from durep.cli import run
 from durep.workflows import effective_jobs, load_overview_samples
 
@@ -127,6 +128,22 @@ def test_detail_rejects_three_scans(tmp_path: Path) -> None:
 
 
 # --- subcommand required ---
+
+
+def test_run_prints_short_version(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as raised:
+        run(["-V"])
+
+    assert raised.value.code == 0
+    assert capsys.readouterr().out == f"durep {__version__}\n"
+
+
+def test_run_prints_long_version(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as raised:
+        run(["--version"])
+
+    assert raised.value.code == 0
+    assert capsys.readouterr().out == f"durep {__version__}\n"
 
 
 def test_run_requires_subcommand(tmp_path: Path) -> None:
