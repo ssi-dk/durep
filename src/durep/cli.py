@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
+from durep import __version__
 from durep.workflows import (
     effective_jobs,
     load_detail_runs,
@@ -77,6 +78,12 @@ def positive_int(value: str) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Generate disk usage reports from ncdu JSON scans."
+    )
+    parser.add_argument(
+        "-V",
+        "--version",
+        action="version",
+        version=f"durep {__version__}",
     )
     parser.add_argument(
         "--log-level",
