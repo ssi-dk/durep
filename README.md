@@ -1,4 +1,4 @@
-# durep - disk usage reports
+# durep - disk usage report generator
 durep generates human-readable HTML and text reports of disk usage from [ncdu](https://en.wikipedia.org/wiki/Ncdu) JSON reports.
 It is useful for informing users of compute clusters about their disk usage.
 

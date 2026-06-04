@@ -1,18 +1,25 @@
-# NCDU report
+# durep - NCDU report generator
 This Python application reads NCDU JSON files and produces a text summary and an interactive HTML
 report of disk usage.
 Two subcommands produce different HTML reports:
-* `detail`: Produce detailed sunburst diagram of a single project's usage at one time, or at two times (latest disk plus delta)
+* `detail`: Produce detailed sunburst diagram of a single project's usage at one time, or at two times (latest disk usage plus delta from last report)
 * `overview`: Show stacked area diagrams of overall usage of many projects at several time points.
 
 ## Architecture
-- `src/durep/ncdu.py` — NCDU JSON parser, produces `NcduNode` tree and `NcduRun` (with timestamp)
-- `src/durep/analytics.py` — Computation: uncompressed stats, global metrics, directory deltas, drilldown trees
-- `src/durep/reports.py` — Text and HTML report rendering, D3 sunburst JS
-- `src/durep/cli.py` — CLI argument parsing
-- `src/durep/workflows.py` - Pipeline orchestration
+- `src/durep/cli.py` — CLI parsing, argument validation, logging setup, and dispatch for `detail` and `overview`
+- `src/durep/workflows.py` — Pipeline orchestration: load scans, schedule overview parsing, compute analytics, load metadata, and write reports
+- `src/durep/ncdu.py` — Streaming NCDU JSON parser, NCDU tree/sample data models, compressed-file format stats, display-node budgeting, and lightweight overview sample parsing
+- `src/durep/analytics.py` — Computation layer: global metrics, directory deltas, drilldown trees, project samples, and interpolated overview time series
+- `src/durep/reports.py` — Text and self-contained HTML rendering for detail and overview reports, including serialization for D3 charts and embedded static assets
+- `src/durep/metadata.py` — Optional overview metadata TSV parsing and resolution for legal owners and project leads
+- `src/durep/sunburst.js` — Interactive D3 sunburst renderer used by `detail` reports
+- `src/durep/stacked_area.js` — Interactive D3 stacked area chart, legend, filters, and summary-card updates used by `overview` reports
+- `src/durep/d3.v7.min.js` — Vendored D3 runtime embedded into generated HTML reports
+- `src/durep/__main__.py` and `src/durep/__init__.py` — Package entry point and version metadata
+- `src/durep/utils.py` — Shared `Project` `NewType` helper
 
 ## Running
+Run commands using uv in a local .venv
 ```bash
 # Install (first time, or after changing dependencies)
 uv pip install -e ".[dev]"
