@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Callable, Iterable
+
 from durep.analytics import (
     ProjectSample,
     build_drilldown_tree,

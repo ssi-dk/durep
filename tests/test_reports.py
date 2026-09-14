@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import datetime
 
+from test_analytics import make_dir, make_file, make_sample
+
 from durep.analytics import (
     ProjectSample,
     ProjectTimeSeries,
@@ -16,8 +18,6 @@ from durep.reports import (
     render_overview_html_report,
     render_overview_text_report,
 )
-
-from test_analytics import make_dir, make_file, make_sample
 
 PN = ProjectName
 OW = Owner

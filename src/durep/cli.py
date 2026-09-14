@@ -3,9 +3,9 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
 
 from durep import __version__
 from durep.workflows import (
