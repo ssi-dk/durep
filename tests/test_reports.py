@@ -1,20 +1,26 @@
 from __future__ import annotations
 
 import datetime
+import json
+import re
 
+import pytest
 from test_analytics import make_dir, make_file, make_sample
 
 from durep.analytics import (
     ProjectSample,
     ProjectTimeSeries,
     build_drilldown_tree,
+    build_overview_series,
     compute_directory_deltas,
+    compute_global_metrics,
 )
 from durep.metadata import Owner, ProjectLead, ProjectMetadata, ProjectName
-from durep.ncdu import NcduDir, UncompressedStats
+from durep.ncdu import NcduDir, NcduRun, UncompressedStats
 from durep.reports import (
     drilldown_to_d3,
     format_bytes,
+    render_html_report,
     render_overview_html_report,
     render_overview_text_report,
 )
@@ -36,6 +42,46 @@ def d3_leaf_sum(node: dict) -> int:
     if "children" in node:
         return sum(d3_leaf_sum(c) for c in node["children"])
     return node.get("value", 0)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "</script><script>alert(1)</script>",
+        "</ScRiPt><img src=x onerror=alert(1)>",
+        "<!--<script>",
+        "<img src=x onerror=alert(1)>",
+        "A&B <team> 'quoted' \"name\" æ",
+    ],
+)
+def test_report_script_data_preserves_names_without_html_delimiters(name: str) -> None:
+    sample = make_sample(name, datetime.date(2024, 1, 1), 100)
+    metadata = {PN(name): MD(name, name)}
+    overview = render_overview_html_report(
+        build_overview_series([sample]), name, [sample], metadata
+    )
+    root = make_dir("/data", None, lambda r: [make_file(r, name, 100)])
+    drilldown = build_drilldown_tree(root, top_n=25)
+    detail = render_html_report(
+        NcduRun(root=root, timestamp=sample.timestamp),
+        None,
+        drilldown,
+        compute_global_metrics(root),
+        name,
+    )
+
+    for report, variable in [(overview, "chartData"), (detail, "usageData")]:
+        match = re.search(rf"const {variable} = (.*);", report)
+        assert match is not None
+        assert "<" not in match[1]
+        assert report.count("</script>") == 2
+        data = json.loads(match[1])
+        if variable == "chartData":
+            assert data["projects"] == [name]
+            assert data["legalOwners"] == {name: name}
+            assert data["projectLeads"] == {name: [name]}
+        else:
+            assert data == drilldown_to_d3(drilldown)
 
 
 def test_d3_leaf_sum_matches_total_bytes_with_dir_overhead() -> None:
@@ -249,9 +295,9 @@ def test_render_overview_html_report_includes_project_history_tooltip_logic() ->
         series, render_overview_text_report(series, samples, owners), samples, owners
     )
 
-    assert "projectHistoryHtml" in html
+    assert "renderProjectHistory" in html
     assert "Observed sizes" in html
-    assert '<strong>" + project + "</strong><br>' in html
+    assert 'tooltip.append("strong").text(project)' in html
 
 
 def test_render_overview_html_report_includes_scrollable_html_legend() -> None:

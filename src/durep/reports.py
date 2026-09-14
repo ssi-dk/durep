@@ -233,6 +233,12 @@ def drilldown_to_d3(node: DrilldownNode) -> dict[str, Any]:
     return result
 
 
+def script_json(data: object) -> str:
+    """Serialize JSON without HTML script delimiters, preserving the decoded values."""
+    # HTML parses script end tags even inside JavaScript strings.
+    return json.dumps(data).replace("<", "\\u003c")
+
+
 def render_html_report(
     current_run: NcduRun,
     previous_run: NcduRun | None,
@@ -240,7 +246,7 @@ def render_html_report(
     metrics: GlobalMetrics,
     text_report: str,
 ) -> str:
-    usage_data = json.dumps(drilldown_to_d3(drilldown))
+    usage_data = script_json(drilldown_to_d3(drilldown))
 
     uncompressed_bytes = format_bytes(metrics.total_uncompressed.total_size)
 
@@ -447,7 +453,7 @@ def render_overview_html_report(
         s.uncompressed_values[-1].total_size if s.uncompressed_values else 0 for s in series
     ]
 
-    chart_data = json.dumps(
+    chart_data = script_json(
         {
             "dates": dates,
             "projects": projects,
