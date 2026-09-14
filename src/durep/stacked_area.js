@@ -176,27 +176,24 @@ function renderStackedArea(containerId, projectLegendId, filterPanelId, seriesDa
     .style("pointer-events", "none")
     .style("display", "none");
 
-  function projectHistoryHtml(project) {
+  function renderProjectHistory(project) {
     const pi = projectIndex.get(project);
     const projectValues = values[pi];
     const projectMeasured = measured[pi];
-    const rows = [];
+    tooltip.selectAll("*").remove();
+    tooltip.append("strong").text(project);
+    const heading = tooltip.append("div");
+    heading.append("span").style("color", color(project)).text("■");
+    heading.append("span").text(" Observed sizes");
     for (let i = 0; i < dates.length; i++) {
       if (projectMeasured[i]) {
-        rows.push(
-          "<div>" +
+        tooltip.append("div").text(
           d3.timeFormat("%Y-%m-%d")(dates[i]) +
           ": " +
-          formatBytes(projectValues[i]) +
-          "</div>"
+          formatBytes(projectValues[i])
         );
       }
     }
-    return (
-      "<strong>" + project + "</strong><br>" +
-      "<span style='color:" + color(project) + "'>■</span> Observed sizes<br>" +
-      rows.join("")
-    );
   }
 
   function positionTooltip(event) {
@@ -206,7 +203,8 @@ function renderStackedArea(containerId, projectLegendId, filterPanelId, seriesDa
   }
 
   function showProjectTooltip(event, project) {
-    tooltip.style("display", "block").html(projectHistoryHtml(project));
+    renderProjectHistory(project);
+    tooltip.style("display", "block");
     positionTooltip(event);
   }
 
