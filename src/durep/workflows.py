@@ -124,7 +124,7 @@ def write_detail_reports(
     deltas = None
     if previous_run is not None:
         log.debug("Computing deltas")
-        deltas = compute_directory_deltas(current_run.root, previous_run.root)
+        deltas = compute_directory_deltas(current_run, previous_run)
         log.info("Computed deltas for %d paths", len(deltas))
 
     text = render_text_report(current_run, previous_run, metrics, deltas, top_n)
