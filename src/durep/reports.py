@@ -14,7 +14,7 @@ from durep.analytics import (
     ProjectTimeSeries,
 )
 from durep.metadata import ProjectMetadata, ProjectName
-from durep.ncdu import NcduDir, NcduRun, path_str
+from durep.ncdu import NcduRun, path_str
 
 _PKG_DIR = Path(__file__).parent
 D3_JS = (_PKG_DIR / "d3.v7.min.js").read_text()
@@ -119,14 +119,17 @@ def render_text_report(
         lines.append("")
 
     # Top N directories by direct file size (excludes subdirectory contributions)
-    ranked = _collect_dirs_by_direct_bytes(root)
-    ranked.sort(key=lambda pair: pair[1], reverse=True)
+    ranked = sorted(
+        current_run.directories.values(), key=lambda usage: (-usage.direct_bytes, usage.path)
+    )
     top_dirs = ranked[:top_n]
     lines.append(f"Top {len(top_dirs)} directories by direct file size")
+    lines.append("  Self includes directory overhead; excludes subdirectories.")
     lines.append(f"  {'Self':>12s}  {'Total':>12s}  Path")
-    for node, direct in top_dirs:
+    for usage in top_dirs:
         lines.append(
-            f"  {format_bytes(direct):>12s}  {format_bytes(node.total_bytes):>12s}  {path_str(node)}"
+            f"  {format_bytes(usage.direct_bytes):>12s}"
+            f"  {format_bytes(usage.total_bytes):>12s}  {usage.path}"
         )
     lines.append("")
 
@@ -135,7 +138,9 @@ def render_text_report(
     if deltas is None:
         lines.append("  Previous scan not available.")
     else:
-        direct_deltas = _compute_direct_deltas(root, deltas)
+        direct_deltas = [
+            (d, d.direct_delta_bytes) for d in deltas.values() if d.direct_delta_bytes is not None
+        ]
         net = sum(d.delta_bytes for d in deltas.values() if d.path == path_str(root))
         lines.append(f"  Net change: {format_bytes(net)}")
         lines.append("")
@@ -157,7 +162,7 @@ def render_text_report(
             for d, direct in growing[:top_n]:
                 lines.append(
                     f"    {'+' + format_bytes(direct):>13s}"
-                    f"  {'+' + format_bytes(d.delta_bytes):>13s} total"
+                    f"  {('+' if d.delta_bytes > 0 else '') + format_bytes(d.delta_bytes):>13s} total"
                     f"  {d.path}"
                 )
             lines.append("")
@@ -175,48 +180,6 @@ def render_text_report(
             lines.append("")
 
     return "\n".join(lines)
-
-
-def _compute_direct_deltas(
-    root: NcduDir, deltas: dict[str, PathDelta]
-) -> list[tuple[PathDelta, int]]:
-    """Compute the direct (self) delta for each directory.
-
-    For each directory, subtract child directory delta contributions
-    to isolate the change from its own direct files.
-    """
-    result: list[tuple[PathDelta, int]] = []
-    stack: list[NcduDir] = [root]
-    while stack:
-        node = stack.pop()
-        delta = deltas.get(path_str(node))
-        if delta is not None:
-            child_dir_delta = sum(
-                deltas[path_str(c)].delta_bytes
-                for c in node.children
-                if isinstance(c, NcduDir) and path_str(c) in deltas
-            )
-            direct = delta.delta_bytes - child_dir_delta
-            if direct != 0:
-                result.append((delta, direct))
-        for c in node.children:
-            if isinstance(c, NcduDir):
-                stack.append(c)
-    return result
-
-
-def _collect_dirs_by_direct_bytes(root: NcduDir) -> list[tuple[NcduDir, int]]:
-    result: list[tuple[NcduDir, int]] = []
-    stack: list[NcduDir] = [root]
-    while stack:
-        node = stack.pop()
-        child_dir_bytes = sum(c.total_bytes for c in node.children if isinstance(c, NcduDir))
-        direct = node.total_bytes - child_dir_bytes
-        result.append((node, direct))
-        for c in node.children:
-            if isinstance(c, NcduDir):
-                stack.append(c)
-    return result
 
 
 def drilldown_to_d3(node: DrilldownNode) -> dict[str, Any]:

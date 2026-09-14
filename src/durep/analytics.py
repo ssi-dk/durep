@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -11,6 +10,7 @@ from durep.ncdu import (
     NcduDir,
     NcduEntry,
     NcduFile,
+    NcduRun,
     UncompressedStats,
     full_path,
     path_str,
@@ -43,13 +43,13 @@ class DrilldownNode:
         return self.total_bytes - self.previous_bytes
 
 
-# If a path occurs in NCDUs at different times, this class is used to store
-# whether data under that path grew or shrunk
+# Directory changes include additions/deletions; file comparisons require retained matches.
 @dataclass(slots=True)
 class PathDelta:
     path: str
     current_bytes: int
     previous_bytes: int
+    direct_delta_bytes: int | None
 
     @property
     def delta_bytes(self) -> int:
@@ -64,17 +64,29 @@ def compute_global_metrics(root: NcduDir) -> GlobalMetrics:
     )
 
 
-def compute_directory_deltas(current: NcduDir, previous: NcduDir) -> dict[str, PathDelta]:
-    current_nodes = _collect_all_nodes(current)
-    previous_nodes = _collect_all_nodes(previous)
+def compute_directory_deltas(current: NcduRun, previous: NcduRun) -> dict[str, PathDelta]:
+    current_nodes = _collect_all_nodes(current.root)
+    previous_nodes = _collect_all_nodes(previous.root)
     deltas: dict[str, PathDelta] = {}
+    for path in sorted(current.directories.keys() | previous.directories.keys()):
+        cur = current.directories.get(path)
+        prev = previous.directories.get(path)
+        deltas[path] = PathDelta(
+            path=path,
+            current_bytes=cur.total_bytes if cur else 0,
+            previous_bytes=prev.total_bytes if prev else 0,
+            direct_delta_bytes=(cur.direct_bytes if cur else 0)
+            - (prev.direct_bytes if prev else 0),
+        )
+
     for path, cur_node in current_nodes.items():
         prev_node = previous_nodes.get(path)
-        if prev_node is not None:
+        if isinstance(cur_node, NcduFile) and isinstance(prev_node, NcduFile):
             deltas[path] = PathDelta(
                 path=path,
                 current_bytes=cur_node.total_bytes,
                 previous_bytes=prev_node.total_bytes,
+                direct_delta_bytes=None,
             )
     return deltas
 
@@ -84,7 +96,9 @@ def _collect_all_nodes(root: NcduDir) -> dict[str, NcduEntry]:
     stack: list[NcduEntry] = [root]
     while stack:
         node = stack.pop()
-        result[path_str(node)] = node
+        # Synthetic labels are not stable identities and can collide with real names.
+        if not isinstance(node, CollapsedNode):
+            result[path_str(node)] = node
         if isinstance(node, NcduDir):
             stack.extend(node.children)
     return result
@@ -104,28 +118,6 @@ def build_drilldown_tree(
     return _build_drilldown(root, top_n, deltas)
 
 
-def collapsed_previous_bytes(
-    deltas: dict[str, PathDelta] | None,
-    parent_key: str,
-    distinct_nodes: Sequence[NcduEntry],
-) -> int | None:
-    """Compute previous_bytes for a synthetic collapsed node.
-
-    previous_collapsed = previous_parent_total
-                       - sum(previous_size of each distinct node that existed previously)
-    """
-    if not deltas:
-        return None
-    parent_delta = deltas.get(parent_key)
-    if parent_delta is None:
-        return None
-    prev_parent = parent_delta.previous_bytes
-    prev_distinct = sum(
-        deltas[path_str(c)].previous_bytes for c in distinct_nodes if path_str(c) in deltas
-    )
-    return prev_parent - prev_distinct
-
-
 def _build_drilldown(
     node: NcduEntry,
     top_n: int,
@@ -134,6 +126,10 @@ def _build_drilldown(
     node_path = full_path(node)
     node_key = str(node_path)
     delta = deltas.get(node_key) if deltas else None
+    if isinstance(node, CollapsedNode) and not node.is_directory:
+        delta = None  # Group membership may differ between scans.
+    if isinstance(node, NcduFile) and delta is not None and delta.direct_delta_bytes is not None:
+        delta = None  # A directory was replaced by a file at this path.
     prev = delta.previous_bytes if delta else None
 
     if isinstance(node, (NcduFile, CollapsedNode)):
@@ -162,7 +158,7 @@ def _build_drilldown(
                 node_type="file",
                 total_bytes=other_bytes,
                 uncompressed=other_stats,
-                previous_bytes=collapsed_previous_bytes(deltas, node_key, kept),
+                previous_bytes=None,  # "Other" does not have stable membership across scans.
             )
         )
 

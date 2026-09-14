@@ -10,7 +10,7 @@ from durep.analytics import (
     compute_directory_deltas,
     compute_global_metrics,
 )
-from durep.ncdu import CollapsedNode, NcduDir, NcduFile, NcduRun, UncompressedStats
+from durep.ncdu import CollapsedNode, NcduDir, NcduFile, NcduRun, UncompressedStats, directory_usage
 
 
 def make_file(parent: NcduDir, name: str, disk_size: int) -> NcduFile:
@@ -56,6 +56,21 @@ def make_dir(
             agg.add_to_self(child.uncompressed)
     node.uncompressed = agg
     return node
+
+
+def run_from_tree(root: NcduDir) -> NcduRun:
+    directories = {}
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        usage = directory_usage(node)
+        directories[usage.path] = usage
+        stack.extend(c for c in node.children if isinstance(c, NcduDir))
+    return NcduRun(
+        root=root,
+        timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
+        directories=directories,
+    )
 
 
 def build_bio_tree() -> NcduDir:
@@ -159,7 +174,7 @@ def test_deltas_detect_growth() -> None:
     prev_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 100)])
     curr_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 300)])
 
-    deltas = compute_directory_deltas(curr_root, prev_root)
+    deltas = compute_directory_deltas(run_from_tree(curr_root), run_from_tree(prev_root))
     assert "/data" in deltas
     assert deltas["/data"].delta_bytes == 200
 
@@ -168,11 +183,11 @@ def test_deltas_detect_shrinkage() -> None:
     prev_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 500)])
     curr_root = make_dir("/data", None, lambda r: [make_file(r, "a.txt", 200)])
 
-    deltas = compute_directory_deltas(curr_root, prev_root)
+    deltas = compute_directory_deltas(run_from_tree(curr_root), run_from_tree(prev_root))
     assert deltas["/data"].delta_bytes == -300
 
 
-def test_deltas_only_include_paths_present_in_both_snapshots() -> None:
+def test_deltas_include_added_and_deleted_directories() -> None:
     prev_root = make_dir(
         "/data",
         None,
@@ -188,11 +203,11 @@ def test_deltas_only_include_paths_present_in_both_snapshots() -> None:
         ],
     )
 
-    deltas = compute_directory_deltas(curr_root, prev_root)
-    # Root is in both, but /data/old and /data/new are not shared
+    deltas = compute_directory_deltas(run_from_tree(curr_root), run_from_tree(prev_root))
     assert "/data" in deltas
-    assert "/data/old" not in deltas
-    assert "/data/new" not in deltas
+    assert deltas["/data/old"].direct_delta_bytes == -10
+    assert deltas["/data/new"].direct_delta_bytes == 20
+    assert deltas["/data"].direct_delta_bytes == 0
 
 
 # --- build_drilldown_tree ---
@@ -243,7 +258,9 @@ def make_run(
 ) -> NcduRun:
     root = make_dir(root_name, None, lambda r: [make_file(r, "a.txt", dsize)])
     ts = datetime.datetime.fromtimestamp(timestamp_epoch, tz=datetime.timezone.utc)
-    return NcduRun(root=root, timestamp=ts)
+    run = run_from_tree(root)
+    run.timestamp = ts
+    return run
 
 
 def test_to_project_sample_basic() -> None:
@@ -260,7 +277,8 @@ def test_to_project_sample_basic() -> None:
 def test_to_project_sample_includes_uncompressed() -> None:
     root = make_dir("/bio", None, lambda r: [make_file(r, "reads.fastq", 1000)])
     ts = datetime.datetime.fromtimestamp(1700000000, tz=datetime.timezone.utc)
-    run = NcduRun(root=root, timestamp=ts)
+    run = run_from_tree(root)
+    run.timestamp = ts
 
     sample = run.to_project_sample()
     assert sample.uncompressed.fastq == 1000

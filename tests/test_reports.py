@@ -5,7 +5,7 @@ import json
 import re
 
 import pytest
-from test_analytics import make_dir, make_file, make_sample
+from test_analytics import make_dir, make_file, make_sample, run_from_tree
 
 from durep.analytics import (
     ProjectSample,
@@ -16,7 +16,7 @@ from durep.analytics import (
     compute_global_metrics,
 )
 from durep.metadata import Owner, ProjectLead, ProjectMetadata, ProjectName
-from durep.ncdu import NcduDir, NcduRun, UncompressedStats
+from durep.ncdu import NcduDir, UncompressedStats
 from durep.reports import (
     drilldown_to_d3,
     format_bytes,
@@ -63,7 +63,7 @@ def test_report_script_data_preserves_names_without_html_delimiters(name: str) -
     root = make_dir("/data", None, lambda r: [make_file(r, name, 100)])
     drilldown = build_drilldown_tree(root, top_n=25)
     detail = render_html_report(
-        NcduRun(root=root, timestamp=sample.timestamp),
+        run_from_tree(root),
         None,
         drilldown,
         compute_global_metrics(root),
@@ -170,7 +170,7 @@ def test_d3_previous_bytes_matches_when_unchanged() -> None:
 
     current = make_tree()
     previous = make_tree()
-    deltas = compute_directory_deltas(current, previous)
+    deltas = compute_directory_deltas(run_from_tree(current), run_from_tree(previous))
     drilldown = build_drilldown_tree(current, top_n=25, deltas=deltas)
     d3 = drilldown_to_d3(drilldown)
 

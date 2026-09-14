@@ -109,6 +109,7 @@ class CollapsedNode:
     count: int
     total_bytes: int
     uncompressed_bytes: int
+    is_directory: bool
 
 
 NcduEntry = NcduDir | NcduFile | CollapsedNode
@@ -160,9 +161,29 @@ def full_path(node: NcduEntry) -> Path:
 
 
 @dataclass(slots=True)
+class DirectoryUsage:
+    """Accounting retained independently of the display tree."""
+
+    path: str
+    total_bytes: int
+    direct_bytes: int
+
+
+def directory_usage(node: NcduDir) -> DirectoryUsage:
+    """Capture self usage, including directory overhead, before discarding children."""
+    child_dir_bytes = sum(
+        child.total_bytes
+        for child in node.children
+        if isinstance(child, NcduDir) or (isinstance(child, CollapsedNode) and child.is_directory)
+    )
+    return DirectoryUsage(path_str(node), node.total_bytes, node.total_bytes - child_dir_bytes)
+
+
+@dataclass(slots=True)
 class NcduRun:
     root: NcduDir
     timestamp: datetime
+    directories: dict[str, DirectoryUsage]
 
     def to_project_sample(self) -> ProjectSample:
         from durep.analytics import ProjectSample
@@ -216,11 +237,12 @@ def parse_tree_to_run(
 ) -> NcduRun:
     "Only store top_n largest direct files in each directory, collapse the rest"
 
-    root = parse_tree_streaming(parser, top_n=top_n, dir_budget=display_nodes)
+    directories: dict[str, DirectoryUsage] = {}
+    root = parse_tree_streaming(parser, top_n, display_nodes, directories)
     if root.parent is None and not Path(root.basename).is_absolute():
         raise ValueError(f"Root node path must be absolute, got: {root.basename}")
     apply_node_budget(root, display_nodes)
-    return NcduRun(root=root, timestamp=timestamp)
+    return NcduRun(root=root, timestamp=timestamp, directories=directories)
 
 
 def parse_tree_to_project_sample(parser: Iterator[Event], timestamp: datetime) -> ProjectSample:
@@ -368,6 +390,7 @@ def collapse_children(directory: NcduDir, top_n: int) -> None:
         count=len(to_collapse),
         total_bytes=total_bytes,
         uncompressed_bytes=uncompressed_bytes,
+        is_directory=False,
     )
 
     directory.children = [child for child in directory.children if id(child) not in to_collapse_ids]
@@ -421,6 +444,7 @@ def apply_node_budget(root: NcduDir, budget: int) -> None:
                             count=child.total_files + child.total_directories,
                             total_bytes=child.total_bytes,
                             uncompressed_bytes=child.uncompressed.total_size,
+                            is_directory=True,
                         )
                     )
             else:
@@ -429,7 +453,7 @@ def apply_node_budget(root: NcduDir, budget: int) -> None:
 
 
 def parse_tree_streaming(
-    parser: Iterator[Event], top_n: int = 20, dir_budget: int = 5000
+    parser: Iterator[Event], top_n: int, dir_budget: int, directories: dict[str, DirectoryUsage]
 ) -> NcduDir:
     # Hoist frequently-used callables to locals to avoid repeated global/attribute lookups
     _heappush = heapq.heappush
@@ -591,9 +615,12 @@ def parse_tree_streaming(
                         count=popped_state.collapsed_count,
                         total_bytes=popped_state.collapsed_total_bytes,
                         uncompressed_bytes=popped_state.collapsed_uncompressed_bytes,
+                        is_directory=False,
                     )
                 )
             finished = popped_node
+            usage = directory_usage(finished)
+            directories[usage.path] = usage
 
             if dir_stack:
                 parent_state = dir_stack[-1]
@@ -629,6 +656,7 @@ def parse_tree_streaming(
                         count=victim.total_files + victim.total_directories,
                         total_bytes=victim.total_bytes,
                         uncompressed_bytes=victim.uncompressed.total_size,
+                        is_directory=True,
                     )
                     vp_state = open_state_map.get(_id(victim_parent))
                     if vp_state is not None:
