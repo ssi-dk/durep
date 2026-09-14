@@ -58,6 +58,13 @@ def format_timestamp(ts: datetime) -> str:
     return ts.strftime("%Y-%m-%d %H:%M UTC")
 
 
+def earliest_measured_bytes(series: ProjectTimeSeries) -> int:
+    """Return the first observed size, including zero, or zero if there are no observations."""
+    return next(
+        (value for value, measured in zip(series.bytes_values, series.measured) if measured), 0
+    )
+
+
 def format_overview_growth_pct(earliest: int, latest: int) -> str:
     growth = latest - earliest
     if earliest > 0:
@@ -347,13 +354,8 @@ def render_overview_text_report(
         owner = project_metadata.legal_owner if project_metadata else None
         leads = ", ".join(project_metadata.project_leads) if project_metadata else ""
 
-        # Find earliest and latest non-zero values
-        earliest = 0
+        earliest = earliest_measured_bytes(ts)
         latest = ts.bytes_values[-1] if ts.bytes_values else 0
-        for v in ts.bytes_values:
-            if v > 0:
-                earliest = v
-                break
 
         growth = latest - earliest
         pct = format_overview_growth_pct(earliest, latest)
@@ -441,14 +443,7 @@ def render_overview_html_report(
 
     per_project_files = [latest_files.get(s.project, 0) for s in series]
     per_project_latest = [s.bytes_values[-1] if s.bytes_values else 0 for s in series]
-    per_project_earliest: list[int] = []
-    for s in series:
-        earliest = 0
-        for v in s.bytes_values:
-            if v > 0:
-                earliest = v
-                break
-        per_project_earliest.append(earliest)
+    per_project_earliest = [earliest_measured_bytes(s) for s in series]
     per_project_compressible = [
         s.uncompressed_values[-1].total_size if s.uncompressed_values else 0 for s in series
     ]

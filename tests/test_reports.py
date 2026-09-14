@@ -200,6 +200,56 @@ def test_d3_includes_compressible_ratio_for_directories() -> None:
     assert d3["compressibleRatio"] == 0.4
 
 
+@pytest.mark.parametrize(
+    ("sizes", "expected_growth", "expected_pct"),
+    [
+        ([0, 1000], "1.000 KB", "new"),
+        ([0, 0], "0 B", "0.0%"),
+        ([1000, 0], "-1.000 KB", "-100.0%"),
+        ([500, 1000], "500 B", "+100.0%"),
+        ([0], "0 B", "0.0%"),
+        ([1000], "0 B", "+0.0%"),
+    ],
+)
+def test_overview_growth_uses_first_measurement(
+    sizes: list[int], expected_growth: str, expected_pct: str
+) -> None:
+    samples = [
+        make_sample("/proj", datetime.date(2024, 1, 2 + 2 * i), size)
+        for i, size in enumerate(sizes)
+    ]
+    # Extend the shared timeline to exercise back-fill, interpolation, and forward-fill.
+    samples.extend(
+        [
+            make_sample("/other", datetime.date(2024, 1, 1), 0),
+            make_sample("/other", datetime.date(2024, 1, 7), 0),
+        ]
+    )
+    series = build_overview_series(samples)
+    report = render_overview_text_report(series, samples, None)
+    row = next(line for line in report.splitlines() if line.strip().startswith("/proj "))
+    assert row.split() == [
+        "/proj",
+        *format_bytes(sizes[-1]).split(),
+        *format_bytes(sizes[0]).split(),
+        *expected_growth.split(),
+        expected_pct,
+        "0",
+        "B",
+    ]
+
+    html = render_overview_html_report(series, report, samples, None)
+    match = re.search(r"const chartData = (.*);", html)
+    assert match is not None
+    data = json.loads(match[1])
+    index = data["projects"].index("/proj")
+    assert data["earliestBytes"][index] == sizes[0]
+    assert data["latestBytes"][index] == sizes[-1]
+    assert (
+        format_bytes(data["latestBytes"][index] - data["earliestBytes"][index]) == expected_growth
+    )
+
+
 def test_render_overview_text_report_caps_extreme_growth_percentage() -> None:
     samples = [
         make_sample("/proj", datetime.date(2024, 1, 1), 1),
