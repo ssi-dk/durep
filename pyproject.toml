@@ -7,7 +7,7 @@ name = "durep"
 dynamic = ["version"]
 description = "Create interactive HTML reports of disk usage from ncdu JSON files"
 license = "MIT"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     { name = "SSI-DK" },
 ]
