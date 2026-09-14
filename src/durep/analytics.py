@@ -191,7 +191,7 @@ class ProjectSample:
 
 
 class ProjectTimeSeries:
-    __slots__ = ("project", "dates", "bytes_values", "uncompressed_values", "measured")
+    __slots__ = ("bytes_values", "dates", "measured", "project", "uncompressed_values")
 
     def __init__(
         self,

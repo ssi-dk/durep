@@ -9,7 +9,6 @@ from durep import __version__
 from durep.cli import run
 from durep.workflows import effective_jobs, load_overview_samples
 
-
 MINIMAL_NCDU = [
     1,
     2,
