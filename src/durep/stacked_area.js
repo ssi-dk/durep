@@ -332,7 +332,9 @@ function renderStackedArea(containerId, projectLegendId, filterPanelId, seriesDa
 }
 
 function formatBytes(n) {
-  if (n < 1000) return n + " B";
+  const sign = n < 0 ? "-" : "";
+  n = Math.abs(n);
+  if (n < 1000) return sign + n + " B";
   const units = ["KB", "MB", "GB", "TB", "PB"];
   let u = -1;
   do { n /= 1000; u++; } while (n >= 1000 && u < units.length - 1);
@@ -340,7 +342,7 @@ function formatBytes(n) {
     const d = n >= 100 ? 1 : n >= 10 ? 2 : 3;
     const rounded = Number(n.toFixed(d));
     if (rounded < 1000 || u >= units.length - 1) {
-      return rounded.toFixed(d) + " " + units[u];
+      return sign + rounded.toFixed(d) + " " + units[u];
     }
     n = rounded / 1000;
     u++;
