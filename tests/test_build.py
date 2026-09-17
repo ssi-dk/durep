@@ -56,12 +56,6 @@ def test_build_provenance_survives_sdist_without_git(tmp_path: Path, state: str)
         with (checkout / ".gitignore").open("a", encoding="utf-8") as stream:
             stream.write("\n# tracked change\n")
     dirty = state != "clean"
-    commit = command(checkout, ["git", "rev-parse", "--short", "HEAD"], env)
-    expected = {
-        "commit": commit,
-        "dirty": dirty,
-        "commit_date": "2025-01-02T03:04:05+01:00",
-    }
     command(checkout, [sys.executable, "-m", "hatchling", "build"], env)
     wheel = next((checkout / "dist").glob("*.whl"))
     with zipfile.ZipFile(wheel) as archive:
@@ -72,7 +66,13 @@ def test_build_provenance_survives_sdist_without_git(tmp_path: Path, state: str)
             for node in ast.parse(version_file).body
             if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
         }
-        assert {name: metadata[name] for name in expected} == expected
+        assert metadata["git_repo_is_dirty"] is dirty
+        version = metadata["__version__"]
+        assert isinstance(version, str)
+        if state == "tracked":
+            assert version.startswith("1.2.4.dev0+")
+        else:
+            assert version == "1.2.3"
     sdist = next((checkout / "dist").glob("*.tar.gz"))
     unpacked = tmp_path / "unpacked"
     with tarfile.open(sdist) as archive:
@@ -89,6 +89,5 @@ def test_build_provenance_survives_sdist_without_git(tmp_path: Path, state: str)
     env["PYTHONPATH"] = str(installed)
     output = command(tmp_path, [sys.executable, "-m", "durep", "--version"], env)
     output = " ".join(output.split())
-    assert output.startswith("durep 1.2.4.dev0" if state == "tracked" else "durep 1.2.3")
-    assert f"commit {commit}, dirty: {'yes' if dirty else 'no'}" in output
-    assert "commit date: 2025-01-02T03:04:05+01:00" in output
+    expected = f"durep {version}" + (" (dirty repository)" if dirty else "")
+    assert output == expected
