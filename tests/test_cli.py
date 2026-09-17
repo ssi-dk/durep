@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import pytest
 
-from durep import __version__
+from durep import version_info
 from durep.cli import run
 from durep.workflows import effective_jobs, load_overview_samples
 
@@ -134,7 +135,7 @@ def test_run_prints_short_version(capsys: pytest.CaptureFixture[str]) -> None:
         run(["-V"])
 
     assert raised.value.code == 0
-    assert capsys.readouterr().out == f"durep {__version__}\n"
+    assert " ".join(capsys.readouterr().out.split()) == f"durep {version_info()}"
 
 
 def test_run_prints_long_version(capsys: pytest.CaptureFixture[str]) -> None:
@@ -142,7 +143,15 @@ def test_run_prints_long_version(capsys: pytest.CaptureFixture[str]) -> None:
         run(["--version"])
 
     assert raised.value.code == 0
-    assert capsys.readouterr().out == f"durep {__version__}\n"
+    assert " ".join(capsys.readouterr().out.split()) == f"durep {version_info()}"
+
+
+def test_startup_logs_version(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    scan = write_ncdu(tmp_path / "scan.json")
+    with caplog.at_level(logging.INFO, logger="durep"):
+        run(["detail", str(scan), "--out-dir", str(tmp_path / "out")])
+
+    assert caplog.records[0].message == f"Starting durep version {version_info()}"
 
 
 def test_run_requires_subcommand(tmp_path: Path) -> None:

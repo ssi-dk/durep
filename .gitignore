@@ -65,6 +65,8 @@ venv.bak/
 .DS_Store
 
 # Project specific
+# version.py is generated at build time
+/src/durep/version.py
 *.log
 *.lock
 !/uv.lock
