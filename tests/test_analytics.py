@@ -257,7 +257,7 @@ def make_run(
     root_name: str = "/data", dsize: int = 100, timestamp_epoch: int = 1700000000
 ) -> NcduRun:
     root = make_dir(root_name, None, lambda r: [make_file(r, "a.txt", dsize)])
-    ts = datetime.datetime.fromtimestamp(timestamp_epoch, tz=datetime.timezone.utc)
+    ts = datetime.datetime.fromtimestamp(timestamp_epoch, tz=datetime.UTC)
     run = run_from_tree(root)
     run.timestamp = ts
     return run
@@ -276,7 +276,7 @@ def test_to_project_sample_basic() -> None:
 
 def test_to_project_sample_includes_uncompressed() -> None:
     root = make_dir("/bio", None, lambda r: [make_file(r, "reads.fastq", 1000)])
-    ts = datetime.datetime.fromtimestamp(1700000000, tz=datetime.timezone.utc)
+    ts = datetime.datetime.fromtimestamp(1700000000, tz=datetime.UTC)
     run = run_from_tree(root)
     run.timestamp = ts
 
@@ -293,7 +293,7 @@ def make_sample(
     total_bytes: int,
     hour: int = 0,
 ) -> ProjectSample:
-    ts = datetime.datetime(date.year, date.month, date.day, hour, tzinfo=datetime.timezone.utc)
+    ts = datetime.datetime(date.year, date.month, date.day, hour, tzinfo=datetime.UTC)
     return ProjectSample(
         project=project,
         timestamp=ts,
