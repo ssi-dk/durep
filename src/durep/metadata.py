@@ -53,13 +53,32 @@ def load_project_metadata(tsv_path: Path) -> dict[ProjectName, ProjectMetadata]:
         result: dict[ProjectName, ProjectMetadata] = {}
         for row in reader:
             name = (row[DISPLAY_NAME_COLUMN] or "").strip()
-            if name:
-                raw_owner = (row[LEGAL_OWNER_COLUMN] or "").strip()
-                raw_leads = (row[PROJECT_LEAD_COLUMN] or "").strip()
-                result[ProjectName(name)] = ProjectMetadata(
-                    legal_owner=Owner(raw_owner) if raw_owner else None,
-                    project_leads=split_project_leads(raw_leads),
+            row_is_blank = True
+            for value in row.values():
+                if isinstance(value, list):
+                    if any(part.strip() for part in value):
+                        row_is_blank = False
+                        break
+                elif value is not None and value.strip():
+                    row_is_blank = False
+                    break
+            if row_is_blank:
+                continue
+            if not name:
+                raise ValueError(
+                    f"metadata TSV {tsv_path} contains a non-empty row without a project"
                 )
+
+            project = ProjectName(name)
+            if project in result:
+                raise ValueError(f"metadata TSV {tsv_path} contains duplicate project: {name!r}")
+
+            raw_owner = (row[LEGAL_OWNER_COLUMN] or "").strip()
+            raw_leads = (row[PROJECT_LEAD_COLUMN] or "").strip()
+            result[project] = ProjectMetadata(
+                legal_owner=Owner(raw_owner) if raw_owner else None,
+                project_leads=split_project_leads(raw_leads),
+            )
         return result
 
 

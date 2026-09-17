@@ -16,6 +16,24 @@ durep has two subcommands:
   Also takes a TSV file with columns `project`, `legal_owner`, and `project_lead` for filtering projects in the HTML overview.
   Multiple project leads in `project_lead` are comma-separated.
 
+### Metadata TSV format
+The file passed to `overview --metadata-tsv-path` must be a UTF-8, tab-delimited text file.
+Its header must contain these exact column names (in any order): `project`, `legal_owner`, and `project_lead`. Additional columns are allowed and ignored.
+
+```text
+project	legal_owner	project_lead
+proj_a	Alice	Carol, Dan
+proj_b	Bob	Eve
+```
+
+The `project` value must match the basename of the NCDU scan's root directory: for example,
+`/data/proj_a` is matched by `proj_a`.
+A blank `legal_owner` means no legal owner, and a blank `project_lead` means no project leads.
+Separate multiple project leads with commas; whitespace around each comma-separated value is ignored.
+
+Empty or whitespace-only rows are ignored. Any other row with a blank or missing `project` value is an error.
+Each project must appear only once in the TSV; duplicate project names are an error.
+
 #### Examples
 Generate a detailed report from one JSON file
 ```bash
