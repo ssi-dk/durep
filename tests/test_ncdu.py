@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -84,7 +84,7 @@ def test_parse_ncdu_json_file_extracts_timestamp(tmp_path: Path) -> None:
     write_ncdu_json(source, root_tree, timestamp=1700000000)
     run = parse_ncdu_json_file(source)
 
-    assert run.timestamp == datetime(2023, 11, 14, 22, 13, 20, tzinfo=timezone.utc)
+    assert run.timestamp == datetime(2023, 11, 14, 22, 13, 20, tzinfo=UTC)
 
 
 def test_parse_ncdu_json_file_rejects_missing_timestamp(tmp_path: Path) -> None:

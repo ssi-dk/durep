@@ -3,7 +3,7 @@ from __future__ import annotations
 import heapq
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -354,7 +354,7 @@ def parse_header(parser: Iterator[Event], error_prefix: str) -> datetime:
         raise ValueError(error_prefix + "Does not contain expected timestamp field in metadata")
 
     try:
-        timestamp = datetime.fromtimestamp(int(metadata["timestamp"]), tz=timezone.utc)
+        timestamp = datetime.fromtimestamp(int(metadata["timestamp"]), tz=UTC)
     except (TypeError, ValueError, OverflowError):
         raise ValueError(error_prefix + "could not parse timestamp as POSIX timestamp")
 

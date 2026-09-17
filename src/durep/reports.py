@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import html
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -92,7 +92,7 @@ def render_text_report(
     lines.append(f"Current scan:  {format_timestamp(current_run.timestamp)}")
     if previous_run is not None:
         lines.append(f"Previous scan: {format_timestamp(previous_run.timestamp)}")
-    lines.append(f"Generated:     {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+    lines.append(f"Generated:     {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")
     lines.append("")
 
     # Summary
@@ -303,7 +303,7 @@ def render_overview_text_report(
 ) -> str:
     lines: list[str] = []
     lines.append("Disk usage overview")
-    lines.append(f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+    lines.append(f"Generated: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")
     lines.append("")
 
     if not series:

@@ -114,7 +114,7 @@ def test_render_overview_html_report_uses_decimal_byte_formatter() -> None:
     samples = [
         ProjectSample(
             project="proj_a",
-            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
             date=datetime.date(2024, 1, 1),
             total_bytes=100,
             total_files=1,
@@ -275,7 +275,7 @@ def test_render_overview_html_report_shows_total_files_card() -> None:
     samples = [
         ProjectSample(
             project="proj_a",
-            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
             date=datetime.date(2024, 1, 1),
             total_bytes=100,
             total_files=3,
@@ -284,7 +284,7 @@ def test_render_overview_html_report_shows_total_files_card() -> None:
         ),
         ProjectSample(
             project="proj_b",
-            timestamp=datetime.datetime(2024, 1, 2, tzinfo=datetime.timezone.utc),
+            timestamp=datetime.datetime(2024, 1, 2, tzinfo=datetime.UTC),
             date=datetime.date(2024, 1, 2),
             total_bytes=200,
             total_files=4,
@@ -322,7 +322,7 @@ def test_render_overview_html_report_includes_project_history_tooltip_logic() ->
     samples = [
         ProjectSample(
             project="proj_a",
-            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
             date=datetime.date(2024, 1, 1),
             total_bytes=100,
             total_files=3,
@@ -354,7 +354,7 @@ def test_render_overview_html_report_includes_scrollable_html_legend() -> None:
     samples = [
         ProjectSample(
             project=f"proj_{i}",
-            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
             date=datetime.date(2024, 1, 1),
             total_bytes=100 + i,
             total_files=1,
@@ -392,7 +392,7 @@ def test_render_overview_html_report_sorts_stack_by_latest_size() -> None:
     samples = [
         ProjectSample(
             project="proj_a",
-            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
             date=datetime.date(2024, 1, 1),
             total_bytes=100,
             total_files=1,
@@ -401,7 +401,7 @@ def test_render_overview_html_report_sorts_stack_by_latest_size() -> None:
         ),
         ProjectSample(
             project="proj_b",
-            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
             date=datetime.date(2024, 1, 1),
             total_bytes=200,
             total_files=1,
@@ -440,7 +440,7 @@ def test_render_overview_html_report_includes_right_y_axis() -> None:
     samples = [
         ProjectSample(
             project="proj_a",
-            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
             date=datetime.date(2024, 1, 1),
             total_bytes=100,
             total_files=1,
@@ -471,7 +471,7 @@ def test_render_overview_html_report_includes_metadata_filters() -> None:
     samples = [
         ProjectSample(
             project="proj_a",
-            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
             date=datetime.date(2024, 1, 1),
             total_bytes=100,
             total_files=1,
@@ -480,7 +480,7 @@ def test_render_overview_html_report_includes_metadata_filters() -> None:
         ),
         ProjectSample(
             project="proj_b",
-            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
             date=datetime.date(2024, 1, 1),
             total_bytes=200,
             total_files=2,
@@ -525,7 +525,7 @@ def test_render_overview_html_report_projects_list_only_shows_visible_projects()
     samples = [
         ProjectSample(
             project="proj_a",
-            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
             date=datetime.date(2024, 1, 1),
             total_bytes=100,
             total_files=1,
@@ -534,7 +534,7 @@ def test_render_overview_html_report_projects_list_only_shows_visible_projects()
         ),
         ProjectSample(
             project="proj_b",
-            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
+            timestamp=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
             date=datetime.date(2024, 1, 1),
             total_bytes=200,
             total_files=2,
