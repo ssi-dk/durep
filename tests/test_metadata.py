@@ -61,6 +61,37 @@ def test_load_tsv_empty_owner_returns_none(tmp_path: Path) -> None:
     assert result == {PN("proj_a"): ProjectMetadata(None, ())}
 
 
+def test_load_tsv_ignores_empty_and_whitespace_only_rows(tmp_path: Path) -> None:
+    tsv = write_tsv(
+        tmp_path / "meta.tsv",
+        "project\tlegal_owner\tproject_lead\n\n  \n\t\t\nproj_a\tAlice\t\n",
+    )
+
+    result = load_project_metadata(tsv)
+
+    assert result == {PN("proj_a"): ProjectMetadata(OW("Alice"), ())}
+
+
+def test_load_tsv_rejects_nonempty_row_without_project(tmp_path: Path) -> None:
+    tsv = write_tsv(
+        tmp_path / "meta.tsv",
+        "project\tlegal_owner\tproject_lead\n\tAlice\t\n",
+    )
+
+    with pytest.raises(ValueError, match="non-empty row without a project"):
+        load_project_metadata(tsv)
+
+
+def test_load_tsv_rejects_duplicate_project(tmp_path: Path) -> None:
+    tsv = write_tsv(
+        tmp_path / "meta.tsv",
+        "project\tlegal_owner\tproject_lead\nproj_a\tAlice\t\n proj_a \tBob\t\n",
+    )
+
+    with pytest.raises(ValueError, match="duplicate project.*proj_a"):
+        load_project_metadata(tsv)
+
+
 def test_load_tsv_missing_optional_lead_field_in_row(tmp_path: Path) -> None:
     """A row with fewer columns than the header yields None from DictReader; should not crash."""
     tsv = write_tsv(
