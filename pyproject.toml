@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
@@ -14,8 +14,8 @@ authors = [
 dependencies = ["ijson"]
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-cov"]
-dev = ["pytest", "pytest-cov", "pyright", "ruff"]
+test = ["pytest", "pytest-cov", "hatchling", "hatch-vcs"]
+dev = ["pytest", "pytest-cov", "pyright", "ruff", "hatchling", "hatch-vcs"]
 
 [project.scripts]
 durep = "durep.cli:main"
@@ -25,7 +25,9 @@ Homepage = "git@github.com:ssi-dk/durep.git"
 Repository = "git@github.com:ssi-dk/durep.git"
 
 [tool.hatch.version]
-path = "src/durep/__init__.py"
+source = "vcs"
+
+[tool.hatch.build.hooks.custom]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/durep"]

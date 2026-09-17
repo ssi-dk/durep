@@ -7,7 +7,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from durep import __version__
+from durep import version_info
+from durep.version import git_repo_is_dirty
 from durep.workflows import (
     effective_jobs,
     load_detail_runs,
@@ -83,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
         "-V",
         "--version",
         action="version",
-        version=f"durep {__version__}",
+        version=f"durep {version_info()}",
     )
     parser.add_argument(
         "--log-level",
@@ -196,6 +197,9 @@ def run(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     namespace = parser.parse_args(argv)
     configure_logging(namespace.log_level)
+    log.info("Starting durep version %s", version_info())
+    if git_repo_is_dirty:
+        log.warning("This build of durep was created from a dirty Git repository.")
     if namespace.subcommand is None:
         parser.error("a subcommand is required (detail, overview)")
     if namespace.subcommand == "detail":
