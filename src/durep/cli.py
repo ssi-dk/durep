@@ -45,7 +45,7 @@ class DetailArgs:
 
 @dataclass(slots=True)
 class OverviewArgs:
-    scans: list[Path]
+    input_dir: Path
     out_dir: Path
     jobs: int | None
     metadata_tsv: Path | None
@@ -54,7 +54,7 @@ class OverviewArgs:
     def from_namespace(cls, namespace: argparse.Namespace) -> OverviewArgs:
         raw_tsv = namespace.metadata_tsv_path
         return cls(
-            scans=[Path(p) for p in namespace.scan],
+            input_dir=Path(namespace.input_dir),
             out_dir=Path(namespace.out_dir),
             jobs=namespace.jobs,
             metadata_tsv=Path(raw_tsv) if raw_tsv is not None else None,
@@ -65,8 +65,8 @@ class OverviewArgs:
             raise ValueError("jobs must be an integer > 0")
         if self.metadata_tsv is not None:
             require_file(self.metadata_tsv, "--metadata-tsv-path")
-        for scan in self.scans:
-            require_file(scan, str(scan))
+        if not self.input_dir.is_dir():
+            raise FileNotFoundError(f"input directory not found: {self.input_dir}")
 
 
 def positive_int(value: str) -> int:
@@ -127,9 +127,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="High-level overview comparing many projects over time.",
     )
     overview.add_argument(
-        "scan",
-        nargs="+",
-        help="One or more ncdu JSON scan paths.",
+        "input_dir",
+        help="Directory of ncdu scans. Read files ending in .json, non-recursively.",
     )
     overview.add_argument(
         "--jobs",
@@ -188,8 +187,13 @@ def execute_detail(args: DetailArgs) -> None:
 
 
 def execute_overview(args: OverviewArgs) -> None:
-    jobs = effective_jobs(args.jobs, len(args.scans))
-    samples = load_overview_samples(args.scans, jobs)
+    scans = sorted(
+        path for path in args.input_dir.iterdir() if path.name.endswith(".json") and path.is_file()
+    )
+    if not scans:
+        raise ValueError(f"no files ending in .json found in input directory: {args.input_dir}")
+    jobs = effective_jobs(args.jobs, len(scans))
+    samples = load_overview_samples(scans, jobs)
     write_overview_reports(args.out_dir, samples, args.metadata_tsv)
 
 
