@@ -7,7 +7,6 @@ import pytest
 
 from durep.metadata import (
     Owner,
-    ProjectLead,
     ProjectMetadata,
     ProjectName,
     load_project_metadata,
@@ -22,60 +21,59 @@ def write_tsv(path: Path, content: str) -> Path:
 
 PN = ProjectName
 OW = Owner
-PL = ProjectLead
 
 
 def test_load_valid_tsv(tmp_path: Path) -> None:
     tsv = write_tsv(
         tmp_path / "meta.tsv",
-        "project\tlegal_owner\tproject_lead\nproj_a\tAlice\tCarol, Dan\nproj_b\tBob\tEve\n",
+        "project\tlegal_owner\nproj_a\tAlice\nproj_b\tBob\n",
     )
 
     result = load_project_metadata(tsv)
 
     assert result == {
-        PN("proj_a"): ProjectMetadata(OW("Alice"), (PL("Carol"), PL("Dan"))),
-        PN("proj_b"): ProjectMetadata(OW("Bob"), (PL("Eve"),)),
+        PN("proj_a"): ProjectMetadata(OW("Alice")),
+        PN("proj_b"): ProjectMetadata(OW("Bob")),
     }
 
 
 def test_load_tsv_strips_whitespace(tmp_path: Path) -> None:
     tsv = write_tsv(
         tmp_path / "meta.tsv",
-        "project\tlegal_owner\tproject_lead\n  proj_a \t Alice \t Carol \n",
+        "project\tlegal_owner\n  proj_a \t Alice \n",
     )
 
     result = load_project_metadata(tsv)
 
-    assert result == {PN("proj_a"): ProjectMetadata(OW("Alice"), (PL("Carol"),))}
+    assert result == {PN("proj_a"): ProjectMetadata(OW("Alice"))}
 
 
 def test_load_tsv_empty_owner_returns_none(tmp_path: Path) -> None:
     tsv = write_tsv(
         tmp_path / "meta.tsv",
-        "project\tlegal_owner\tproject_lead\nproj_a\t\t\n",
+        "project\tlegal_owner\nproj_a\t\n",
     )
 
     result = load_project_metadata(tsv)
 
-    assert result == {PN("proj_a"): ProjectMetadata(None, ())}
+    assert result == {PN("proj_a"): ProjectMetadata(None)}
 
 
 def test_load_tsv_ignores_empty_and_whitespace_only_rows(tmp_path: Path) -> None:
     tsv = write_tsv(
         tmp_path / "meta.tsv",
-        "project\tlegal_owner\tproject_lead\n\n  \n\t\t\nproj_a\tAlice\t\n",
+        "project\tlegal_owner\n\n  \n\t\nproj_a\tAlice\n",
     )
 
     result = load_project_metadata(tsv)
 
-    assert result == {PN("proj_a"): ProjectMetadata(OW("Alice"), ())}
+    assert result == {PN("proj_a"): ProjectMetadata(OW("Alice"))}
 
 
 def test_load_tsv_rejects_nonempty_row_without_project(tmp_path: Path) -> None:
     tsv = write_tsv(
         tmp_path / "meta.tsv",
-        "project\tlegal_owner\tproject_lead\n\tAlice\t\n",
+        "project\tlegal_owner\n\tAlice\n",
     )
 
     with pytest.raises(ValueError, match="non-empty row without a project"):
@@ -85,29 +83,29 @@ def test_load_tsv_rejects_nonempty_row_without_project(tmp_path: Path) -> None:
 def test_load_tsv_rejects_duplicate_project(tmp_path: Path) -> None:
     tsv = write_tsv(
         tmp_path / "meta.tsv",
-        "project\tlegal_owner\tproject_lead\nproj_a\tAlice\t\n proj_a \tBob\t\n",
+        "project\tlegal_owner\nproj_a\tAlice\n proj_a \tBob\n",
     )
 
     with pytest.raises(ValueError, match="duplicate project.*proj_a"):
         load_project_metadata(tsv)
 
 
-def test_load_tsv_missing_optional_lead_field_in_row(tmp_path: Path) -> None:
+def test_load_tsv_missing_owner_field_in_row(tmp_path: Path) -> None:
     """A row with fewer columns than the header yields None from DictReader; should not crash."""
     tsv = write_tsv(
         tmp_path / "meta.tsv",
-        "project\tlegal_owner\tproject_lead\nproj_a\tAlice\n",
+        "project\tlegal_owner\nproj_a\n",
     )
 
     result = load_project_metadata(tsv)
 
-    assert result == {PN("proj_a"): ProjectMetadata(OW("Alice"), ())}
+    assert result == {PN("proj_a"): ProjectMetadata(None)}
 
 
 def test_load_tsv_missing_display_name_column(tmp_path: Path) -> None:
     tsv = write_tsv(
         tmp_path / "meta.tsv",
-        "name\tlegal_owner\tproject_lead\nproj_a\tAlice\tCarol\n",
+        "name\tlegal_owner\nproj_a\tAlice\n",
     )
     with pytest.raises(ValueError, match="missing required column.*project"):
         load_project_metadata(tsv)
@@ -116,19 +114,18 @@ def test_load_tsv_missing_display_name_column(tmp_path: Path) -> None:
 def test_load_tsv_missing_legal_owner_column(tmp_path: Path) -> None:
     tsv = write_tsv(
         tmp_path / "meta.tsv",
-        "project\tproject_lead\nproj_a\tCarol\n",
+        "project\nproj_a\n",
     )
     with pytest.raises(ValueError, match="missing required column.*legal_owner"):
         load_project_metadata(tsv)
 
 
-def test_load_tsv_rejects_project_leads_column(tmp_path: Path) -> None:
+def test_load_tsv_ignores_extra_columns(tmp_path: Path) -> None:
     tsv = write_tsv(
         tmp_path / "meta.tsv",
-        "project\tlegal_owner\tproject_leads\nproj_a\tAlice\tCarol\n",
+        "legal_owner\tproject\tnotes\nAlice\tproj_a\tExample\n",
     )
-    with pytest.raises(ValueError, match="missing required column.*project_lead"):
-        load_project_metadata(tsv)
+    assert load_project_metadata(tsv) == {PN("proj_a"): ProjectMetadata(OW("Alice"))}
 
 
 def test_load_tsv_empty_file(tmp_path: Path) -> None:
@@ -139,8 +136,8 @@ def test_load_tsv_empty_file(tmp_path: Path) -> None:
 
 def test_resolve_all_present() -> None:
     tsv_metadata = {
-        PN("proj_a"): ProjectMetadata(OW("Alice"), (PL("Carol"),)),
-        PN("proj_b"): ProjectMetadata(OW("Bob"), ()),
+        PN("proj_a"): ProjectMetadata(OW("Alice")),
+        PN("proj_b"): ProjectMetadata(OW("Bob")),
     }
 
     result = resolve_project_metadata([PN("proj_a"), PN("proj_b")], tsv_metadata)
@@ -149,14 +146,14 @@ def test_resolve_all_present() -> None:
 
 
 def test_resolve_missing_project_warns(caplog: pytest.LogCaptureFixture) -> None:
-    tsv_metadata = {PN("proj_a"): ProjectMetadata(OW("Alice"), ())}
+    tsv_metadata = {PN("proj_a"): ProjectMetadata(OW("Alice"))}
 
     with caplog.at_level(logging.WARNING, logger="durep"):
         result = resolve_project_metadata([PN("proj_a"), PN("proj_b")], tsv_metadata)
 
     assert result == {
-        PN("proj_a"): ProjectMetadata(OW("Alice"), ()),
-        PN("proj_b"): ProjectMetadata(None, ()),
+        PN("proj_a"): ProjectMetadata(OW("Alice")),
+        PN("proj_b"): ProjectMetadata(None),
     }
     assert "proj_b" in caplog.text
     assert "no metadata" in caplog.text
@@ -164,10 +161,10 @@ def test_resolve_missing_project_warns(caplog: pytest.LogCaptureFixture) -> None
 
 def test_resolve_extra_tsv_entries_ignored() -> None:
     tsv_metadata = {
-        PN("proj_a"): ProjectMetadata(OW("Alice"), ()),
-        PN("proj_c"): ProjectMetadata(OW("Charlie"), ()),
+        PN("proj_a"): ProjectMetadata(OW("Alice")),
+        PN("proj_c"): ProjectMetadata(OW("Charlie")),
     }
 
     result = resolve_project_metadata([PN("proj_a")], tsv_metadata)
 
-    assert result == {PN("proj_a"): ProjectMetadata(OW("Alice"), ())}
+    assert result == {PN("proj_a"): ProjectMetadata(OW("Alice"))}

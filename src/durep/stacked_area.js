@@ -79,13 +79,7 @@ function renderStackedArea(containerId, projectLegendId, filterPanelId, seriesDa
 
   function projectIsVisible(project) {
     if (activeFilter == null) return true;
-    if (activeFilter.type === "legalOwner") {
-      return legalOwners[project] === activeFilter.value;
-    }
-    if (activeFilter.type === "projectLead") {
-      return (projectLeads[project] || []).includes(activeFilter.value);
-    }
-    return true;
+    return legalOwners[project] === activeFilter;
   }
 
   function updateStats() {
@@ -214,8 +208,7 @@ function renderStackedArea(containerId, projectLegendId, filterPanelId, seriesDa
 
   // Filter projects by metadata (if available)
   const legalOwners = seriesData.legalOwners || {};
-  const projectLeads = seriesData.projectLeads || {};
-  const hasMetadata = seriesData.legalOwners != null || seriesData.projectLeads != null;
+  const hasMetadata = seriesData.legalOwners != null;
 
   function renderProjectButton(container, project) {
     const item = container.append("div")
@@ -241,10 +234,7 @@ function renderStackedArea(containerId, projectLegendId, filterPanelId, seriesDa
   }
 
   function countVisibleForFilter(filter) {
-    return sortedProjects.filter(p => {
-      if (filter.type === "legalOwner") return legalOwners[p] === filter.value;
-      return (projectLeads[p] || []).includes(filter.value);
-    }).length;
+    return sortedProjects.filter(p => legalOwners[p] === filter).length;
   }
 
   function renderFilterOption(container, label, filter) {
@@ -254,11 +244,7 @@ function renderStackedArea(containerId, projectLegendId, filterPanelId, seriesDa
       .datum(filter)
       .on("click", function(event) {
         event.preventDefault();
-        if (
-          activeFilter &&
-          activeFilter.type === filter.type &&
-          activeFilter.value === filter.value
-        ) {
+        if (activeFilter === filter) {
           activeFilter = null;
         } else {
           activeFilter = filter;
@@ -289,27 +275,7 @@ function renderStackedArea(containerId, projectLegendId, filterPanelId, seriesDa
       ownerSection.append("h3").text("Legal owners");
       const ownerList = ownerSection.append("div").attr("class", "filter-list");
       legalOwnerOrder.sort().forEach(owner => {
-        renderFilterOption(ownerList, owner, {type: "legalOwner", value: owner});
-      });
-    }
-
-    const projectLeadOrder = [];
-    const seenProjectLeads = new Set();
-    sortedProjects.forEach(p => {
-      (projectLeads[p] || []).forEach(lead => {
-        if (!seenProjectLeads.has(lead)) {
-          seenProjectLeads.add(lead);
-          projectLeadOrder.push(lead);
-        }
-      });
-    });
-
-    if (projectLeadOrder.length > 0) {
-      const leadSection = filterPanelContainer.append("section").attr("class", "filter-panel");
-      leadSection.append("h3").text("Project leads");
-      const leadList = leadSection.append("div").attr("class", "filter-list");
-      projectLeadOrder.sort().forEach(lead => {
-        renderFilterOption(leadList, lead, {type: "projectLead", value: lead});
+        renderFilterOption(ownerList, owner, owner);
       });
     }
 
@@ -321,9 +287,7 @@ function renderStackedArea(containerId, projectLegendId, filterPanelId, seriesDa
     filterPanelContainer.selectAll(".filter-option")
       .classed("is-active", function() {
         const filter = d3.select(this).datum();
-        return activeFilter &&
-          activeFilter.type === filter.type &&
-          activeFilter.value === filter.value;
+        return activeFilter === filter;
       });
   }
 

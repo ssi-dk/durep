@@ -15,7 +15,7 @@ from durep.analytics import (
     compute_directory_deltas,
     compute_global_metrics,
 )
-from durep.metadata import Owner, ProjectLead, ProjectMetadata, ProjectName
+from durep.metadata import Owner, ProjectMetadata, ProjectName
 from durep.ncdu import NcduDir, UncompressedStats
 from durep.reports import (
     drilldown_to_d3,
@@ -27,13 +27,11 @@ from durep.reports import (
 
 PN = ProjectName
 OW = Owner
-PL = ProjectLead
 
 
-def MD(owner: str | None, *leads: str) -> ProjectMetadata:
+def MD(owner: str | None) -> ProjectMetadata:
     return ProjectMetadata(
         OW(owner) if owner is not None else None,
-        tuple(PL(lead) for lead in leads),
     )
 
 
@@ -56,7 +54,7 @@ def d3_leaf_sum(node: dict) -> int:
 )
 def test_report_script_data_preserves_names_without_html_delimiters(name: str) -> None:
     sample = make_sample(name, datetime.date(2024, 1, 1), 100)
-    metadata = {PN(name): MD(name, name)}
+    metadata = {PN(name): MD(name)}
     overview = render_overview_html_report(
         build_overview_series([sample]), name, [sample], metadata
     )
@@ -79,7 +77,7 @@ def test_report_script_data_preserves_names_without_html_delimiters(name: str) -
         if variable == "chartData":
             assert data["projects"] == [name]
             assert data["legalOwners"] == {name: name}
-            assert data["projectLeads"] == {name: [name]}
+            assert "projectLeads" not in data
         else:
             assert data == drilldown_to_d3(drilldown)
 
@@ -504,21 +502,19 @@ def test_render_overview_html_report_includes_metadata_filters() -> None:
             measured=[True],
         ),
     ]
-    owners = {PN("proj_a"): MD("Alice", "Carol"), PN("proj_b"): MD("Alice", "Dan")}
+    owners = {PN("proj_a"): MD("Alice"), PN("proj_b"): MD("Alice")}
 
     html = render_overview_html_report(
         series, render_overview_text_report(series, samples, owners), samples, owners
     )
 
     assert "Legal owners" in html
-    assert "Project leads" in html
+    assert "Project lead" not in html
     assert "filter-panel" in html
     assert "legalOwnerOrder.sort().forEach" in html
-    assert "projectLeadOrder.sort().forEach" in html
     assert '"legalOwners"' in html
-    assert '"projectLeads"' in html
+    assert "projectLeads" not in html
     assert '"Alice"' in html
-    assert '"Carol"' in html
 
 
 def test_render_overview_html_report_projects_list_only_shows_visible_projects() -> None:

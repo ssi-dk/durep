@@ -37,9 +37,9 @@ def write_ncdu(
 def write_metadata_tsv(tmp_path: Path, projects: list[str]) -> Path:
     """Write a metadata TSV with each project as its own legal owner."""
     tsv_path = tmp_path / "metadata.tsv"
-    lines = ["project\tlegal_owner\tproject_lead"]
+    lines = ["project\tlegal_owner"]
     for p in projects:
-        lines.append(f"{p}\t{p}\t")
+        lines.append(f"{p}\t{p}")
     tsv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return tsv_path
 
@@ -458,7 +458,7 @@ def test_overview_without_metadata_tsv_html_has_no_metadata_filters(tmp_path: Pa
 
     html = (out_dir / "report.html").read_text(encoding="utf-8")
     assert '"legalOwners": null' in html
-    assert '"projectLeads": null' in html
+    assert "projectLeads" not in html
     assert "legend-item" in html
 
 
