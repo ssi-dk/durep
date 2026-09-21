@@ -142,7 +142,7 @@ def build_parser() -> argparse.ArgumentParser:
     overview.add_argument(
         "--metadata-tsv-path",
         default=None,
-        help="TSV file with project, legal_owner, and project_lead columns."
+        help="TSV file with project and legal_owner columns."
         " If omitted, projects are listed individually without metadata filters.",
     )
 

@@ -13,23 +13,21 @@ durep has two subcommands:
 * `detail`: Takes an ncdu JSON file and creates a detailed report of disk usage with an interactive sunburst diagram.
   Optionally takes a second JSON file which must be of the same top-level directory at a different time, in which case it provides information about disk usage changes between the two.
 * `overview`: Takes an input directory and reads all files with names ending in `.json` (case-sensitive), non-recursively, to create a report with total disk usage per top-level directory over time.
-  Also takes a TSV file with columns `project`, `legal_owner`, and `project_lead` for filtering projects in the HTML overview.
-  Multiple project leads in `project_lead` are comma-separated.
+  Also takes a TSV file with columns `project` and `legal_owner` for filtering projects in the HTML overview.
 
 ### Metadata TSV format
 The file passed to `overview --metadata-tsv-path` must be a UTF-8, tab-delimited text file.
-Its header must contain these exact column names (in any order): `project`, `legal_owner`, and `project_lead`. Additional columns are allowed and ignored.
+Its header must contain these exact column names (in any order): `project` and `legal_owner`. Additional columns are allowed and ignored.
 
 ```text
-project	legal_owner	project_lead
-proj_a	Alice	Carol, Dan
-proj_b	Bob	Eve
+project	legal_owner
+proj_a	Alice
+proj_b	Bob
 ```
 
 The `project` value must match the basename of the NCDU scan's root directory: for example,
 `/data/proj_a` is matched by `proj_a`.
-A blank `legal_owner` means no legal owner, and a blank `project_lead` means no project leads.
-Separate multiple project leads with commas; whitespace around each comma-separated value is ignored.
+A blank `legal_owner` means no legal owner.
 
 Empty or whitespace-only rows are ignored. Any other row with a blank or missing `project` value is an error.
 Each project must appear only once in the TSV; duplicate project names are an error.

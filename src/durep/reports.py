@@ -311,11 +311,10 @@ def render_overview_text_report(
         return "\n".join(lines)
 
     # Build a table: one row per project
-    rows: list[tuple[str, str | None, str, int, int, int, str, int]] = []
+    rows: list[tuple[str, str | None, int, int, int, str, int]] = []
     for ts in series:
         project_metadata = metadata.get(ProjectName(ts.project)) if metadata else None
         owner = project_metadata.legal_owner if project_metadata else None
-        leads = ", ".join(project_metadata.project_leads) if project_metadata else ""
 
         earliest = earliest_measured_bytes(ts)
         latest = ts.bytes_values[-1] if ts.bytes_values else 0
@@ -325,29 +324,28 @@ def render_overview_text_report(
 
         compressible = ts.uncompressed_values[-1].total_size if ts.uncompressed_values else 0
 
-        rows.append((ts.project, owner, leads, latest, earliest, growth, pct, compressible))
+        rows.append((ts.project, owner, latest, earliest, growth, pct, compressible))
 
     # Sort by legal owner then latest size descending (if metadata), else by latest size descending.
     if metadata:
-        rows.sort(key=lambda r: (r[1] or "", -r[3]))
+        rows.sort(key=lambda r: (r[1] or "", -r[2]))
     else:
-        rows.sort(key=lambda r: -r[3])
+        rows.sort(key=lambda r: -r[2])
 
     if metadata:
         # Table header with metadata columns
         lines.append(
-            f"  {'Project':<35s} {'Legal owner':<15s} {'Project lead':<20s}"
+            f"  {'Project':<35s} {'Legal owner':<15s}"
             f" {'Latest':>10s} {'Earliest':>10s} {'Growth':>9s} {'%':>8s}"
             f" {'Compressible':>10s}"
         )
-        for project, owner, leads, latest, earliest, growth, pct, compressible in rows:
+        for project, owner, latest, earliest, growth, pct, compressible in rows:
             proj_display = project if len(project) <= 35 else "..." + project[-(35 - 3) :]
             owner_display = (
                 (owner or "") if len(owner or "") <= 15 else "..." + (owner or "")[-(15 - 3) :]
             )
-            leads_display = leads if len(leads) <= 20 else "..." + leads[-(20 - 3) :]
             lines.append(
-                f"  {proj_display:<35s} {owner_display:<15s} {leads_display:<20s}"
+                f"  {proj_display:<35s} {owner_display:<15s}"
                 f" {format_bytes(latest):>10s} {format_bytes(earliest):>10s}"
                 f" {format_bytes(growth):>9s} {pct:>8s} {format_bytes(compressible):>10s}"
             )
@@ -357,7 +355,7 @@ def render_overview_text_report(
             f"  {'Project':<40s} {'Latest':>10s} {'Earliest':>10s}"
             f" {'Growth':>9s} {'%':>8s} {'Compressible':>10s}"
         )
-        for project, _owner, _leads, latest, earliest, growth, pct, compressible in rows:
+        for project, owner, latest, earliest, growth, pct, compressible in rows:
             proj_display = project if len(project) <= 40 else "..." + project[-(40 - 3) :]
             lines.append(
                 f"  {proj_display:<40s}"
@@ -426,14 +424,6 @@ def render_overview_html_report(
                 for s in series
                 if (project_metadata := metadata.get(ProjectName(s.project))) is not None
                 and project_metadata.legal_owner is not None
-            }
-            if metadata
-            else None,
-            "projectLeads": {
-                s.project: project_metadata.project_leads
-                for s in series
-                if (project_metadata := metadata.get(ProjectName(s.project))) is not None
-                and project_metadata.project_leads
             }
             if metadata
             else None,
