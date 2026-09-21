@@ -1,0 +1,23 @@
+[
+  1,
+  2,
+  {
+    "progname": "ncdu",
+    "progver": "2.7",
+    "timestamp": 1769904000
+  },
+  [
+    {"name": "/data/projects/birch", "asize": 4096, "dsize": 4096},
+    [
+      {"name": "assemblies", "asize": 4096, "dsize": 4096},
+      {"name": "lake-a.fasta", "asize": 4300000, "dsize": 4300800},
+      {"name": "lake-b.fasta", "asize": 3900000, "dsize": 3901440},
+      {"name": "contigs.gfa", "asize": 950000, "dsize": 950272}
+    ],
+    [
+      {"name": "field_notes", "asize": 4096, "dsize": 4096},
+      {"name": "stations.csv", "asize": 78000, "dsize": 81920},
+      {"name": "collection.tsv", "asize": 45000, "dsize": 45056}
+    ]
+  ]
+]

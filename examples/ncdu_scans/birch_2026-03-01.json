@@ -1,0 +1,27 @@
+[
+  1,
+  2,
+  {
+    "progname": "ncdu",
+    "progver": "2.7",
+    "timestamp": 1772323200
+  },
+  [
+    {"name": "/data/projects/birch", "asize": 4096, "dsize": 4096, "dev": 423},
+    {"name": "stations.link.csv", "asize": 82000, "dsize": 86016, "ino": 81001, "nlink": 4},
+    [
+      {"name": "assemblies", "asize": 4096, "dsize": 4096},
+      {"name": "lake-a.fasta", "asize": 4300000, "dsize": 4300800},
+      {"name": "lake-b.fasta", "asize": 3900000, "dsize": 3901440}
+    ],
+    [
+      {"name": "field_notes", "asize": 4096, "dsize": 4096},
+      {"name": "stations.csv", "asize": 82000, "dsize": 86016, "ino": 81001, "nlink": 4},
+      {"name": "stations.link.csv", "asize": 82000, "dsize": 86016, "ino": 81001, "nlink": 4},
+      {"name": "external-stations.csv", "asize": 82000, "dsize": 86016, "dev": 424, "ino": 81001, "nlink": 2},
+      {"name": "collection.tsv", "asize": 47000, "dsize": 49152},
+      {"name": "weather.csv", "asize": 31000, "dsize": 32768, "ino": 81002, "hlnkc": true},
+      {"name": "weather.link.csv", "asize": 31000, "dsize": 32768, "ino": 81002, "hlnkc": true}
+    ]
+  ]
+]
