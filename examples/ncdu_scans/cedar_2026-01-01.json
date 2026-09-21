@@ -1,0 +1,22 @@
+[
+  1,
+  2,
+  {
+    "progname": "ncdu",
+    "progver": "2.7",
+    "timestamp": 1767225600
+  },
+  [
+    {"name": "/data/projects/cedar", "asize": 4096, "dsize": 4096, "dev": 422},
+    [
+      {"name": "clinical", "asize": 4096, "dsize": 4096},
+      {"name": "patient-001_R1.fq", "asize": 5100000, "dsize": 5100544, "ino": 73001, "hlnkc": true, "nlink": 3},
+      {"name": "patient-001_R2.fq", "asize": 4900000, "dsize": 4900864},
+      {"name": "patient-001.vcf", "asize": 650000, "dsize": 651264}
+    ],
+    [
+      {"name": "reports", "asize": 4096, "dsize": 4096},
+      {"name": "summary.pdf", "asize": 240000, "dsize": 241664}
+    ]
+  ]
+]

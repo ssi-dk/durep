@@ -47,3 +47,8 @@ Generate an overview of a large collection of NCDU reports
 ```bash
 durep overview ncdu_reports --out-dir output --metadata-tsv-path metadata.tsv
 ```
+
+### Try the included example data
+The [`examples/`](examples/) directory contains six small NCDU scans and matching metadata that can
+be used immediately after cloning the repository. It exercises both reports, including detail-report
+changes and overview-report project filters.

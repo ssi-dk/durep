@@ -1,0 +1,30 @@
+[
+  1,
+  2,
+  {
+    "progname": "ncdu",
+    "progver": "2.7",
+    "timestamp": 1767225600
+  },
+  [
+    {"name": "/data/projects/alder", "asize": 4096, "dsize": 4096, "dev": 421},
+    {"name": "README.md", "asize": 12000, "dsize": 12288},
+    [
+      {"name": "raw_reads", "asize": 4096, "dsize": 4096},
+      {"name": "sample-a_R1.fastq.gz", "asize": 7200000, "dsize": 7200768, "ino": 42001, "hlnkc": true, "nlink": 2},
+      {"name": "sample-a_R2.fastq.gz", "asize": 7100000, "dsize": 7100416},
+      {"name": "sample-b_R1.fastq.gz", "asize": 6800000, "dsize": 6800384}
+    ],
+    [
+      {"name": "analysis", "asize": 4096, "dsize": 4096},
+      {"name": "variants.vcf.gz", "asize": 1200000, "dsize": 1200128},
+      {"name": "alignment.sam", "asize": 5300000, "dsize": 5300224},
+      {"name": "sample-a_R1.link.fastq.gz", "asize": 7200000, "dsize": 7200768, "ino": 42001, "hlnkc": true, "nlink": 2},
+      [
+        {"name": "scripts", "asize": 4096, "dsize": 4096},
+        {"name": "call_variants.py", "asize": 18000, "dsize": 20480},
+        {"name": "settings.tsv", "asize": 2500, "dsize": 4096}
+      ]
+    ]
+  ]
+]

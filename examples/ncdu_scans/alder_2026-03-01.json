@@ -1,0 +1,31 @@
+[
+  1,
+  2,
+  {
+    "progname": "ncdu",
+    "progver": "2.7",
+    "timestamp": 1772323200
+  },
+  [
+    {"name": "/data/projects/alder", "asize": 4096, "dsize": 4096, "dev": 421},
+    {"name": "README.md", "asize": 14000, "dsize": 16384},
+    [
+      {"name": "raw_reads", "asize": 4096, "dsize": 4096},
+      {"name": "sample-a_R1.fastq.gz", "asize": 7200000, "dsize": 7200768, "ino": 42001, "hlnkc": true, "nlink": 2},
+      {"name": "sample-a_R2.fastq.gz", "asize": 7100000, "dsize": 7100416},
+      {"name": "sample-b_R1.fastq.gz", "asize": 6800000, "dsize": 6800384},
+      {"name": "sample-b_R2.fastq.gz", "asize": 6700000, "dsize": 6701056}
+    ],
+    [
+      {"name": "analysis", "asize": 4096, "dsize": 4096},
+      {"name": "variants.vcf.gz", "asize": 1800000, "dsize": 1800192},
+      {"name": "alignment.bam", "asize": 2800000, "dsize": 2801664},
+      {"name": "sample-a_R1.link.fastq.gz", "asize": 7200000, "dsize": 7200768, "ino": 42001, "hlnkc": true, "nlink": 2},
+      [
+        {"name": "results", "asize": 4096, "dsize": 4096},
+        {"name": "consensus.fasta", "asize": 850000, "dsize": 851968},
+        {"name": "qc.csv", "asize": 32000, "dsize": 32768}
+      ]
+    ]
+  ]
+]
