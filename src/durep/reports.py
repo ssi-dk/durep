@@ -95,9 +95,29 @@ def render_text_report(
     lines.append(f"Generated:     {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")
     lines.append("")
 
+    # Definitions
+    lines.append("Definitions:")
+    lines.append(
+        "Compressible files are uncompressed files ending with some known formats like fasta, fastq, sam, vcf and a few other."
+    )
+    lines.append(
+        "A file counts towards multi-counted bytes if it is a hard link to an already-counted file."
+    )
+    lines.append("Self size includes directory overhead; excludes subdirectories.")
+    lines.append(
+        "Total size excludes multi-counted bytes within each subtree; Self counts every link."
+    )
+    lines.append(
+        "In delta, net change excludes multi-counted bytes. Directory changes count every link"
+    )
+    lines.append("")
+
     # Summary
     lines.append("Summary")
-    lines.append(f"  Total disk usage:  {format_bytes(metrics.total_usage_bytes)}")
+    lines.append(
+        f"  Total disk usage:  {format_bytes(metrics.total_usage_bytes - root.multicounted_bytes)}"
+    )
+    lines.append(f"  Multi-counted bytes: {format_bytes(root.multicounted_bytes)}")
     lines.append(f"  Total files:       {metrics.total_files}")
     lines.append(f"  Total directories: {root.total_directories}")
     lines.append("")
@@ -124,12 +144,12 @@ def render_text_report(
     )
     top_dirs = ranked[:top_n]
     lines.append(f"Top {len(top_dirs)} directories by direct file size")
-    lines.append("  Self includes directory overhead; excludes subdirectories.")
+
     lines.append(f"  {'Self':>12s}  {'Total':>12s}  Path")
     for usage in top_dirs:
         lines.append(
             f"  {format_bytes(usage.direct_bytes):>12s}"
-            f"  {format_bytes(usage.total_bytes):>12s}  {usage.path}"
+            f"  {format_bytes(usage.total_bytes - usage.multicounted_bytes):>12s}  {usage.path}"
         )
     lines.append("")
 
@@ -142,6 +162,8 @@ def render_text_report(
             (d, d.direct_delta_bytes) for d in deltas.values() if d.direct_delta_bytes is not None
         ]
         net = sum(d.delta_bytes for d in deltas.values() if d.path == path_str(root))
+        if previous_run is not None:
+            net -= root.multicounted_bytes - previous_run.root.multicounted_bytes
         lines.append(f"  Net change: {format_bytes(net)}")
         lines.append("")
 
@@ -278,6 +300,10 @@ def render_html_report(
     <div class="card">
       <div class="label">Compressable files</div>
       <div class="value">{html.escape(uncompressed_bytes)}</div>
+    </div>
+    <div class="card" title="Extra bytes included in total usage because multiple hardlinks to the same file occur within this directory tree.">
+      <div class="label">Multi-counted bytes</div>
+      <div class="value">{html.escape(format_bytes(current_run.root.multicounted_bytes))}</div>
     </div>
   </div>
 
