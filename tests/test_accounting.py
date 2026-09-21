@@ -8,7 +8,48 @@ from test_reports import d3_leaf_sum
 
 from durep.analytics import build_drilldown_tree, compute_directory_deltas, compute_global_metrics
 from durep.ncdu import CollapsedNode, parse_ncdu_json_file
-from durep.reports import drilldown_to_d3, render_text_report
+from durep.reports import drilldown_to_d3, format_bytes, render_text_report
+
+
+@pytest.mark.parametrize("budget", [1, 1000])
+@pytest.mark.parametrize("compare", [False, True])
+def test_text_report_excludes_duplicate_bytes_from_totals(
+    tmp_path: Path, budget: int, compare: bool
+) -> None:
+    runs = []
+    for count in (1, 3):
+        path = tmp_path / f"scan-{count}.json"
+        write_ncdu_json(
+            path,
+            [
+                {"name": "/data", "dsize": 100},
+                [
+                    {"name": "sub", "dsize": 50},
+                    *[
+                        {"name": f"link-{i}", "dsize": 200, "ino": 1, "nlink": 3}
+                        for i in range(count)
+                    ],
+                ],
+            ],
+        )
+        runs.append(parse_ncdu_json_file(path, top_n=1, display_nodes=budget))
+    previous, current = runs
+    report = render_text_report(
+        current,
+        previous if compare else None,
+        compute_global_metrics(current.root),
+        compute_directory_deltas(current, previous) if compare else None,
+        20,
+    )
+    assert "Total disk usage:  350 B" in report
+    assert "Multi-counted bytes: 400 B" in report
+    assert f"  {format_bytes(650):>12s}  {format_bytes(250):>12s}  /data/sub" in report
+    assert f"  {format_bytes(100):>12s}  {format_bytes(350):>12s}  /data\n" in report
+    if compare:
+        assert "Net change: 0 B" in report
+    else:
+        assert "Previous scan not available." in report
+    assert current.root.total_bytes == 750
 
 
 @pytest.mark.parametrize("budget", [1, 5, 1000])

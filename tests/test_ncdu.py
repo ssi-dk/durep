@@ -77,6 +77,60 @@ def test_parse_ncdu_json_file_builds_normalized_tree_with_aggregates(tmp_path: P
     assert deep.disk_size == 0
 
 
+@pytest.mark.parametrize("budget", [1, 1000])
+@pytest.mark.parametrize(
+    "link_fields",
+    [{"hlnkc": True}, {"nlink": 5}, {"hlnkc": False, "nlink": 5}, {"nlink": 1, "hlnkc": True}],
+)
+def test_multicounted_bytes_per_subtree(
+    tmp_path: Path, budget: int, link_fields: dict[str, object]
+) -> None:
+    def linked(name: str) -> dict[str, object]:
+        return {"name": name, "ino": 7, "dsize": 100, **link_fields}
+
+    source = tmp_path / "hardlinks.json"
+    write_ncdu_json(
+        source,
+        [
+            {"name": "/A", "dev": 10, "dsize": 10},
+            [{"name": "B", "dsize": 10}, linked("one.fa"), linked("two.fa")],
+            [{"name": "C", "dsize": 10}, [{"name": "nested", "dsize": 10}, linked("three.fa")]],
+            linked("four.fa"),
+            [{"name": "other-device", "dev": 20}, linked("separate.fa")],
+            {**linked("explicit-device.fa"), "dev": 20},
+            {"name": "ordinary.fa", "ino": 7, "dsize": 100},
+        ],
+    )
+    run = parse_ncdu_json_file(source, top_n=1, display_nodes=budget)
+    assert run.root.total_bytes == 740
+    assert run.root.total_files == 7
+    assert run.root.uncompressed.fasta == 700
+    assert run.root.multicounted_bytes == 400
+    assert {path: usage.multicounted_bytes for path, usage in run.directories.items()} == {
+        "/A": 400,
+        "/A/B": 100,
+        "/A/C": 0,
+        "/A/C/nested": 0,
+        "/A/other-device": 0,
+    }
+    assert run.to_project_sample() == parse_ncdu_project_sample(source)
+
+
+def test_hardlinks_outside_scan_do_not_count_as_duplicates(tmp_path: Path) -> None:
+    source = tmp_path / "outside.json"
+    write_ncdu_json(
+        source,
+        [
+            {"name": "/A"},
+            {"name": "one", "ino": 7, "nlink": 100, "dsize": 123},
+            {"name": "two", "ino": 8, "hlnkc": True, "dsize": 456},
+        ],
+    )
+    run = parse_ncdu_json_file(source)
+    assert run.root.total_bytes == 579
+    assert run.root.multicounted_bytes == 0
+
+
 def test_parse_ncdu_json_file_extracts_timestamp(tmp_path: Path) -> None:
     root_tree = [{"name": "/", "asize": 1}]
 

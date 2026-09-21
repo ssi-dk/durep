@@ -100,6 +100,7 @@ class NcduDir:
     total_directories: int
     uncompressed: UncompressedStats
     children: list[NcduEntry] = field(default_factory=list)
+    multicounted_bytes: int = 0
 
 
 @dataclass(slots=True)
@@ -120,6 +121,9 @@ class OpenDirState:
     """Mutable state for a directory whose children are still being parsed."""
 
     node: NcduDir
+    device: int
+    # Only open directories retain identities; maps are merged on directory close.
+    hardlinks: dict[tuple[int, int], int] = field(default_factory=dict)
     # Monotonic counter assigning each child a unique key. Used as the dict
     # key in dir_children (enabling O(1) replacement during inline collapsing)
     # and as a tiebreaker in the kept_files min-heap.
@@ -167,6 +171,7 @@ class DirectoryUsage:
     path: str
     total_bytes: int
     direct_bytes: int
+    multicounted_bytes: int = 0
 
 
 def directory_usage(node: NcduDir) -> DirectoryUsage:
@@ -176,7 +181,12 @@ def directory_usage(node: NcduDir) -> DirectoryUsage:
         for child in node.children
         if isinstance(child, NcduDir) or (isinstance(child, CollapsedNode) and child.is_directory)
     )
-    return DirectoryUsage(path_str(node), node.total_bytes, node.total_bytes - child_dir_bytes)
+    return DirectoryUsage(
+        path_str(node),
+        node.total_bytes,
+        node.total_bytes - child_dir_bytes,
+        node.multicounted_bytes,
+    )
 
 
 @dataclass(slots=True)
@@ -473,6 +483,9 @@ def parse_tree_streaming(
     map_key = ""
     map_name = ""
     map_dsize = 0
+    map_device: int | None = None
+    map_inode = 0
+    map_hardlinked = False
     root: NcduDir | None = None
 
     # Inline directory collapsing state
@@ -510,7 +523,12 @@ def parse_tree_streaming(
                         total_directories=1,
                         uncompressed=UncompressedStats(0, 0, 0, 0, 0),
                     )
-                    state = OpenDirState(node=node)
+                    device = (
+                        map_device
+                        if map_device is not None
+                        else (dir_stack[-1].device if dir_stack else 0)
+                    )
+                    state = OpenDirState(node=node, device=device)
                     dir_stack_append(state)
                     open_state_map[_id(node)] = state
                 else:
@@ -522,6 +540,15 @@ def parse_tree_streaming(
 
                     dir_node.total_bytes += dsize
                     dir_node.total_files += 1
+                    if map_hardlinked:
+                        identity = (
+                            map_device if map_device is not None else directory.device,
+                            map_inode,
+                        )
+                        if identity in directory.hardlinks:
+                            dir_node.multicounted_bytes += dsize
+                        else:
+                            directory.hardlinks[identity] = dsize
 
                     # Inlined from_file_node: compute uncompressed category
                     # without allocating an UncompressedStats per file.
@@ -577,16 +604,27 @@ def parse_tree_streaming(
                         directory.collapsed_uncompressed_bytes += file_unc_total
 
             else:
-                # Value event inside a map — only capture name and dsize
+                # Capture sizes and the identity of multiply linked files.
                 if map_key == "name":
                     map_name = value
                 elif map_key == "dsize":
                     map_dsize = value  # ijson yajl2_c already returns int
+                elif map_key == "dev":
+                    map_device = value
+                elif map_key == "ino":
+                    map_inode = value
+                elif map_key == "hlnkc":
+                    map_hardlinked = map_hardlinked or value is True
+                elif map_key == "nlink":
+                    map_hardlinked = map_hardlinked or value > 1
 
         elif event == "start_map":
             in_map = True
             map_name = ""
             map_dsize = 0
+            map_device = None
+            map_inode = 0
+            map_hardlinked = False
 
         elif event == "start_array":
             awaiting_dir_metadata = True
@@ -632,6 +670,20 @@ def parse_tree_streaming(
                 parent_node.total_files += finished.total_files
                 parent_node.total_directories += finished.total_directories
                 parent_node.uncompressed.add_to_self(finished.uncompressed)
+                parent_node.multicounted_bytes += finished.multicounted_bytes
+                # Merge smaller into larger, transferring ownership rather than
+                # retaining a copy for every directory in a deep subtree.
+                if len(parent_state.hardlinks) < len(popped_state.hardlinks):
+                    parent_state.hardlinks, popped_state.hardlinks = (
+                        popped_state.hardlinks,
+                        parent_state.hardlinks,
+                    )
+                for identity, size in popped_state.hardlinks.items():
+                    if identity in parent_state.hardlinks:
+                        parent_node.multicounted_bytes += size
+                    else:
+                        parent_state.hardlinks[identity] = size
+                popped_state.hardlinks.clear()
 
                 # Push onto dir_heap for potential inline collapsing
                 depth = _len(dir_stack)

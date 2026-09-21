@@ -36,5 +36,7 @@ Expected multi-counted bytes in the detail report's top-level card:
 | cedar | 0 | 0 |
 
 In March's `birch` scan, `field_notes` alone has 118,784 multi-counted bytes; the root adds
-another 86,016 for the link shared with that subtree. Usage totals and compressible statistics
-still include every pathname. The complete example data is under 10 KB.
+another 86,016 for the link shared with that subtree. The HTML usage card, sunburst, and
+compressible statistics still include every pathname. The detail text report excludes
+multi-counted bytes from total disk usage, directory totals, and net change, and lists the
+multi-counted bytes separately. The complete example data is under 10 KB.

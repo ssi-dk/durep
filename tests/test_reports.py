@@ -82,6 +82,21 @@ def test_report_script_data_preserves_names_without_html_delimiters(name: str) -
             assert data == drilldown_to_d3(drilldown)
 
 
+@pytest.mark.parametrize("duplicate_bytes", [0, 1024])
+def test_detail_report_shows_multicounted_bytes(duplicate_bytes: int) -> None:
+    root = make_dir("/data", None, lambda r: [make_file(r, "a", 4096)])
+    root.multicounted_bytes = duplicate_bytes
+    drilldown = build_drilldown_tree(root, top_n=25)
+    report = render_html_report(
+        run_from_tree(root), None, drilldown, compute_global_metrics(root), ""
+    )
+    assert (
+        '<div class="label">Multi-counted bytes</div>\n'
+        f'      <div class="value">{format_bytes(duplicate_bytes)}</div>'
+    ) in report
+    assert d3_leaf_sum(drilldown_to_d3(drilldown)) == root.total_bytes
+
+
 def test_d3_leaf_sum_matches_total_bytes_with_dir_overhead() -> None:
     root = make_dir(
         "/data",
