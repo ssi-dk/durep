@@ -53,6 +53,10 @@ class OverviewArgs:
     @classmethod
     def from_namespace(cls, namespace: argparse.Namespace) -> OverviewArgs:
         raw_tsv = namespace.metadata_tsv_path
+        if raw_tsv is None:
+            log.debug("--metadata-tsv-path was not passed")
+        else:
+            log.debug("--metadata-tsv-path: %s", raw_tsv)
         return cls(
             input_dir=Path(namespace.input_dir),
             out_dir=Path(namespace.out_dir),
