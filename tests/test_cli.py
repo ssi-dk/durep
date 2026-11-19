@@ -51,21 +51,13 @@ def normalize_generated(text: str) -> str:
 # --- detail subcommand ---
 
 
-def test_detail_single_scan_returns_zero(tmp_path: Path) -> None:
+def test_detail_single_scan_writes_text_and_html_reports(tmp_path: Path) -> None:
     scan = write_ncdu(tmp_path / "scan.json")
     out_dir = tmp_path / "out"
 
     exit_code = run(["detail", str(scan), "--out-dir", str(out_dir)])
 
     assert exit_code == 0
-
-
-def test_detail_creates_output_files(tmp_path: Path) -> None:
-    scan = write_ncdu(tmp_path / "scan.json")
-    out_dir = tmp_path / "out"
-
-    run(["detail", str(scan), "--out-dir", str(out_dir)])
-
     assert (out_dir / "report.txt").is_file()
     assert (out_dir / "report.html").is_file()
 
@@ -293,7 +285,7 @@ def test_overview_rejects_missing_directory(tmp_path: Path) -> None:
 def test_overview_reads_only_matching_files_non_recursively(tmp_path: Path) -> None:
     write_ncdu(tmp_path / "scan.json", root_name="/project_a")
     write_ncdu(tmp_path / "scanjson", root_name="/project_b")
-    for name in ("notes.txt", "scan.JSON", "scan.json.bak"):
+    for name in ("notes.txt", "ignored.JSON", "scan.json.bak"):
         (tmp_path / name).write_text("not JSON", encoding="utf-8")
     nested = tmp_path / "nested.json"
     nested.mkdir()
