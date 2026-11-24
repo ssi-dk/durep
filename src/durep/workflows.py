@@ -13,13 +13,14 @@ from durep.analytics import (
     compute_directory_deltas,
     compute_global_metrics,
 )
-from durep.metadata import (
-    ProjectMetadata,
-    ProjectName,
-    load_project_metadata,
-    resolve_project_metadata,
+from durep.metadata import ProjectMetadata, ProjectName
+from durep.ncdu import (
+    NcduRun,
+    parse_ncdu_json_file,
+    parse_ncdu_project_name,
+    parse_ncdu_project_sample,
+    path_str,
 )
-from durep.ncdu import NcduRun, parse_ncdu_json_file, parse_ncdu_project_sample, path_str
 from durep.reports import (
     render_html_report,
     render_overview_html_report,
@@ -48,6 +49,34 @@ def estimate_input_size(path: Path) -> int:
 
 def load_overview_sample(scan_path: Path) -> ProjectSample:
     return parse_ncdu_project_sample(scan_path)
+
+
+def select_overview_scans(
+    scans: Sequence[Path],
+    metadata: dict[ProjectName, ProjectMetadata],
+) -> list[Path]:
+    """Keep only scans of projects listed in the metadata, reading just each scan's root name."""
+    selected: list[Path] = []
+    found: set[ProjectName] = set()
+    excluded: set[str] = set()
+    for scan in scans:
+        project = ProjectName(parse_ncdu_project_name(scan))
+        if project in metadata:
+            selected.append(scan)
+            found.add(project)
+        else:
+            excluded.add(project)
+
+    if excluded:
+        log.info(
+            "Excluded %d project(s) not listed in metadata TSV: %s",
+            len(excluded),
+            ", ".join(sorted(excluded)),
+        )
+    for project in sorted(metadata.keys() - found):
+        log.warning("Project %r in metadata TSV has no scans in input directory", project)
+    log.info("Selected %d of %d scans", len(selected), len(scans))
+    return selected
 
 
 def schedule_overview_scans(scans: list[Path]) -> list[Path]:
@@ -149,17 +178,12 @@ def write_detail_reports(
 def write_overview_reports(
     out_dir: Path,
     samples: list[ProjectSample],
-    metadata_tsv: Path | None,
+    metadata: dict[ProjectName, ProjectMetadata] | None,
 ) -> None:
     if out_dir.exists():
         raise FileExistsError(f"output directory already exists: {out_dir}")
 
     series = build_overview_series(samples)
-
-    metadata: dict[ProjectName, ProjectMetadata] | None = None
-    if metadata_tsv is not None:
-        tsv_metadata = load_project_metadata(metadata_tsv)
-        metadata = resolve_project_metadata([ProjectName(s.project) for s in series], tsv_metadata)
 
     text = render_overview_text_report(series, samples, metadata)
     html = render_overview_html_report(series, text, samples, metadata)

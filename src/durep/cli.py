@@ -8,11 +8,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from durep import version_info
+from durep.metadata import ProjectMetadata, ProjectName, load_project_metadata
 from durep.version import git_repo_is_dirty
 from durep.workflows import (
     effective_jobs,
     load_detail_runs,
     load_overview_samples,
+    select_overview_scans,
     write_detail_reports,
     write_overview_reports,
 )
@@ -132,7 +134,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     overview.add_argument(
         "input_dir",
-        help="Directory of ncdu scans. Read files ending in .json, non-recursively.",
+        help="Directory of ncdu scans. Read files ending in .json, non-recursively."
+        " If --metadata-tsv-path is given, only scans of projects listed there are used.",
     )
     overview.add_argument(
         "--jobs",
@@ -146,8 +149,8 @@ def build_parser() -> argparse.ArgumentParser:
     overview.add_argument(
         "--metadata-tsv-path",
         default=None,
-        help="TSV file with project and legal_owner columns."
-        " If omitted, projects are listed individually without metadata filters.",
+        help="TSV file with project and legal_owner columns. Selects which projects to include."
+        " If omitted, all projects are included and listed without metadata filters.",
     )
 
     return parser
@@ -196,9 +199,18 @@ def execute_overview(args: OverviewArgs) -> None:
     )
     if not scans:
         raise ValueError(f"no files ending in .json found in input directory: {args.input_dir}")
+    metadata: dict[ProjectName, ProjectMetadata] | None = None
+    if args.metadata_tsv is not None:
+        metadata = load_project_metadata(args.metadata_tsv)
+        scans = select_overview_scans(scans, metadata)
+        if not scans:
+            raise ValueError(
+                f"no scans in input directory {args.input_dir} belong to projects"
+                f" listed in metadata TSV {args.metadata_tsv}"
+            )
     jobs = effective_jobs(args.jobs, len(scans))
     samples = load_overview_samples(scans, jobs)
-    write_overview_reports(args.out_dir, samples, args.metadata_tsv)
+    write_overview_reports(args.out_dir, samples, metadata)
 
 
 def run(argv: Sequence[str] | None = None) -> int:

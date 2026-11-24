@@ -13,7 +13,9 @@ durep has two subcommands:
 * `detail`: Takes an ncdu JSON file and creates a detailed report of disk usage with an interactive sunburst diagram.
   Optionally takes a second JSON file which must be of the same top-level directory at a different time, in which case it provides information about disk usage changes between the two.
 * `overview`: Takes an input directory and reads all files with names ending in `.json` (case-sensitive), non-recursively, to create a report with total disk usage per top-level directory over time.
-  Also takes a TSV file with columns `project` and `legal_owner` for filtering projects in the HTML overview.
+  Optionally takes a metadata TSV file with columns `project` and `legal_owner`. When given, it selects which projects
+  appear in the overview: scans of projects not listed in the TSV are skipped, so a subset of a large scan directory
+  can be reported without copying or symlinking scans. The legal owners are used for filtering projects in the HTML overview.
 
 ### Metadata TSV format
 The file passed to `overview --metadata-tsv-path` must be a UTF-8, tab-delimited text file.
@@ -28,6 +30,8 @@ proj_b	Bob
 The `project` value must match the basename of the NCDU scan's root directory: for example,
 `/data/proj_a` is matched by `proj_a`.
 A blank `legal_owner` means no legal owner.
+Only scans of projects listed in the TSV are included in the overview. Excluded projects are logged at INFO level,
+and projects listed in the TSV without any scans in the input directory produce a warning.
 
 Empty or whitespace-only rows are ignored. Any other row with a blank or missing `project` value is an error.
 Each project must appear only once in the TSV; duplicate project names are an error.

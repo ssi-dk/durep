@@ -15,6 +15,7 @@ from durep.ncdu import (
     apply_node_budget,
     full_path,
     parse_ncdu_json_file,
+    parse_ncdu_project_name,
     parse_ncdu_project_sample,
 )
 
@@ -701,3 +702,40 @@ def test_inline_collapse_root_is_never_collapsed(tmp_path: Path) -> None:
 
     assert isinstance(run.root, NcduDir)
     assert run.root.basename == "/"
+
+
+def test_parse_ncdu_project_name_uses_root_basename(tmp_path: Path) -> None:
+    source = tmp_path / "scan.json"
+    root_tree = [
+        {"name": "/projects/alder/", "asize": 1},
+        {"name": "file.bin", "asize": 10},
+    ]
+    write_ncdu_json(source, root_tree)
+
+    assert parse_ncdu_project_name(source) == "alder"
+    assert parse_ncdu_project_name(source) == parse_ncdu_project_sample(source).project
+
+
+def test_parse_ncdu_project_name_stops_after_root_entry(tmp_path: Path) -> None:
+    source = tmp_path / "scan.json"
+    valid_prefix = json.dumps([1, 2, {"timestamp": 1700000000}, [{"name": "/data/proj"}]])
+    # Truncated after the root entry: a full parse would fail, the peek must not.
+    source.write_text(valid_prefix[: valid_prefix.index("}]]") + 1] + ", {", encoding="utf-8")
+
+    assert parse_ncdu_project_name(source) == "proj"
+
+
+def test_parse_ncdu_project_name_rejects_relative_root_name(tmp_path: Path) -> None:
+    source = tmp_path / "scan.json"
+    write_ncdu_json(source, [{"name": "relative"}])
+
+    with pytest.raises(ValueError, match="must be absolute"):
+        parse_ncdu_project_name(source)
+
+
+def test_parse_ncdu_project_name_rejects_file_as_root(tmp_path: Path) -> None:
+    source = tmp_path / "scan.json"
+    write_ncdu_json(source, {"name": "/data"})  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="not a valid directory"):
+        parse_ncdu_project_name(source)
