@@ -198,10 +198,8 @@ class NcduRun:
     def to_project_sample(self) -> ProjectSample:
         from durep.analytics import ProjectSample
 
-        root_str = path_str(self.root)
-        project = root_str.rsplit("/", 1)[-1] or root_str
         return ProjectSample(
-            project=project,
+            project=project_name_from_root(path_str(self.root)),
             timestamp=self.timestamp,
             date=self.timestamp.date(),
             total_bytes=self.root.total_bytes,
@@ -220,6 +218,40 @@ def parse_ncdu_json_file(path: Path, top_n: int = 20, display_nodes: int = 5000)
 
 def parse_ncdu_project_sample(path: Path) -> ProjectSample:
     return parse_ncdu_file(path, parse_tree_to_project_sample)
+
+
+def parse_ncdu_project_name(path: Path) -> str:
+    """Return the project name of a scan, reading only up to its root directory entry."""
+    return parse_ncdu_file(path, parse_root_project_name)
+
+
+def project_name_from_root(root_str: str) -> str:
+    "The project name is the basename of the scan's root directory"
+    return root_str.rsplit("/", 1)[-1] or root_str
+
+
+def parse_root_project_name(parser: Iterator[Event], timestamp: datetime) -> str:
+    event, _ = next(parser)
+    if event != "start_array":
+        raise ValueError("Fourth field (root directory) is not a valid directory in NCDU format")
+    event, _ = next(parser)
+    if event != "start_map":
+        raise ValueError("Fourth field (root directory) is not a valid directory in NCDU format")
+
+    root_map: dict[str, Any] = {}
+    key = ""
+    for event, value in parser:
+        if event == "map_key":
+            key = value
+        elif event == "end_map":
+            break
+        else:
+            root_map[key] = value
+
+    root_name = get_required_name(root_map)
+    if not Path(root_name).is_absolute():
+        raise ValueError(f"Root node path must be absolute, got: {root_name}")
+    return project_name_from_root(str(Path(root_name)))
 
 
 def parse_ncdu_file(path: Path, parse_body: Callable[..., Any], *parse_args: Any) -> Any:
@@ -318,10 +350,8 @@ def parse_tree_to_project_sample(parser: Iterator[Event], timestamp: datetime) -
     if not root_path.is_absolute():
         raise ValueError(f"Root node path must be absolute, got: {root_basename}")
 
-    root_str = str(root_path)
-    project = root_str.rsplit("/", 1)[-1] or root_str
     return ProjectSample(
-        project=project,
+        project=project_name_from_root(str(root_path)),
         timestamp=timestamp,
         date=timestamp.date(),
         total_bytes=total_bytes,

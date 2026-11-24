@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-import logging
-from collections.abc import Sequence
 from csv import DictReader
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NewType
-
-log = logging.getLogger("durep")
 
 DISPLAY_NAME_COLUMN = "project"
 LEGAL_OWNER_COLUMN = "legal_owner"
@@ -68,22 +64,3 @@ def load_project_metadata(tsv_path: Path) -> dict[ProjectName, ProjectMetadata]:
                 legal_owner=Owner(raw_owner) if raw_owner else None,
             )
         return result
-
-
-def resolve_project_metadata(
-    projects: Sequence[ProjectName],
-    tsv_metadata: dict[ProjectName, ProjectMetadata],
-) -> dict[ProjectName, ProjectMetadata]:
-    """Return metadata for the given project names, warning for missing entries."""
-    metadata: dict[ProjectName, ProjectMetadata] = {}
-    for project in projects:
-        raw_metadata = tsv_metadata.get(project)
-        if raw_metadata is not None:
-            metadata[project] = raw_metadata
-        else:
-            log.warning(
-                "Project %r has no metadata in metadata TSV",
-                project,
-            )
-            metadata[project] = ProjectMetadata(legal_owner=None)
-    return metadata

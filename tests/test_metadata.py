@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 import pytest
@@ -10,7 +9,6 @@ from durep.metadata import (
     ProjectMetadata,
     ProjectName,
     load_project_metadata,
-    resolve_project_metadata,
 )
 
 
@@ -132,39 +130,3 @@ def test_load_tsv_empty_file(tmp_path: Path) -> None:
     tsv = write_tsv(tmp_path / "meta.tsv", "")
     with pytest.raises(ValueError, match="empty or has no header"):
         load_project_metadata(tsv)
-
-
-def test_resolve_all_present() -> None:
-    tsv_metadata = {
-        PN("proj_a"): ProjectMetadata(OW("Alice")),
-        PN("proj_b"): ProjectMetadata(OW("Bob")),
-    }
-
-    result = resolve_project_metadata([PN("proj_a"), PN("proj_b")], tsv_metadata)
-
-    assert result == tsv_metadata
-
-
-def test_resolve_missing_project_warns(caplog: pytest.LogCaptureFixture) -> None:
-    tsv_metadata = {PN("proj_a"): ProjectMetadata(OW("Alice"))}
-
-    with caplog.at_level(logging.WARNING, logger="durep"):
-        result = resolve_project_metadata([PN("proj_a"), PN("proj_b")], tsv_metadata)
-
-    assert result == {
-        PN("proj_a"): ProjectMetadata(OW("Alice")),
-        PN("proj_b"): ProjectMetadata(None),
-    }
-    assert "proj_b" in caplog.text
-    assert "no metadata" in caplog.text
-
-
-def test_resolve_extra_tsv_entries_ignored() -> None:
-    tsv_metadata = {
-        PN("proj_a"): ProjectMetadata(OW("Alice")),
-        PN("proj_c"): ProjectMetadata(OW("Charlie")),
-    }
-
-    result = resolve_project_metadata([PN("proj_a")], tsv_metadata)
-
-    assert result == {PN("proj_a"): ProjectMetadata(OW("Alice"))}

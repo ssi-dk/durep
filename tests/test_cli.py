@@ -299,6 +299,75 @@ def test_overview_reads_only_matching_files_non_recursively(tmp_path: Path) -> N
     assert "project_b" not in text
 
 
+def test_overview_metadata_selects_projects(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    scans = tmp_path / "scans"
+    scans.mkdir()
+    write_ncdu(scans / "a.json", root_name="/proj_a")
+    write_ncdu(scans / "b.json", root_name="/proj_b")
+    write_ncdu(scans / "c.json", root_name="/proj_c")
+    meta = write_metadata_tsv(tmp_path, ["proj_a", "proj_c", "proj_gone"])
+    out_dir = tmp_path / "out"
+
+    with caplog.at_level(logging.INFO, logger="durep"):
+        run(["overview", str(scans), "--out-dir", str(out_dir), "--metadata-tsv-path", str(meta)])
+
+    text = (out_dir / "report.txt").read_text(encoding="utf-8")
+    html = (out_dir / "report.html").read_text(encoding="utf-8")
+    assert "proj_a" in text and "proj_c" in text
+    assert "proj_b" not in text and "proj_b" not in html
+    assert "proj_gone" not in html
+    assert "Excluded 1 project(s) not listed in metadata TSV: proj_b" in caplog.text
+    warnings = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("'proj_gone'" in m and "has no scans" in m for m in warnings)
+
+
+def test_overview_metadata_excluded_scans_are_not_fully_parsed(tmp_path: Path) -> None:
+    scans = tmp_path / "scans"
+    scans.mkdir()
+    write_ncdu(scans / "a.json", root_name="/proj_a")
+    # Excluded project whose body is broken: selection must only read up to the root entry.
+    (scans / "b.json").write_text(
+        '[1, 2, {"timestamp": 1700000000}, [{"name": "/proj_b"}, {', encoding="utf-8"
+    )
+    meta = write_metadata_tsv(tmp_path, ["proj_a"])
+
+    exit_code = run(
+        [
+            "overview",
+            str(scans),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--metadata-tsv-path",
+            str(meta),
+        ]
+    )
+
+    assert exit_code == 0
+
+
+def test_overview_rejects_metadata_matching_no_scans(tmp_path: Path) -> None:
+    scans = tmp_path / "scans"
+    scans.mkdir()
+    write_ncdu(scans / "a.json", root_name="/proj_a")
+    meta = write_metadata_tsv(tmp_path, ["proj_x"])
+
+    with pytest.raises(ValueError, match="no scans in input directory"):
+        run(
+            [
+                "overview",
+                str(scans),
+                "--out-dir",
+                str(tmp_path / "out"),
+                "--metadata-tsv-path",
+                str(meta),
+            ]
+        )
+
+    assert not (tmp_path / "out").exists()
+
+
 def test_overview_rejects_file_as_input_directory(tmp_path: Path) -> None:
     scan = write_ncdu(tmp_path / "scan.json")
 
@@ -381,21 +450,10 @@ def test_overview_parallel_preserves_parse_error_details(tmp_path: Path) -> None
     bad.write_text(
         '[1, 2, {"progname": "ncdu", "timestamp": 1700000000}, {"name": }]', encoding="utf-8"
     )
-    meta = write_metadata_tsv(tmp_path, ["data"])
 
+    # No metadata TSV, so that the bad file is first read by a worker process
     with pytest.raises(ValueError, match=r"Invalid NCDU JSON file at .*parse error:"):
-        run(
-            [
-                "overview",
-                str(tmp_path),
-                "--jobs",
-                "2",
-                "--out-dir",
-                str(tmp_path / "out"),
-                "--metadata-tsv-path",
-                str(meta),
-            ]
-        )
+        run(["overview", str(tmp_path), "--jobs", "2", "--out-dir", str(tmp_path / "out")])
 
 
 def test_overview_without_metadata_tsv(tmp_path: Path) -> None:
