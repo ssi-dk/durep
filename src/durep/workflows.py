@@ -16,10 +16,11 @@ from durep.analytics import (
 from durep.metadata import ProjectMetadata, ProjectName
 from durep.ncdu import (
     NcduRun,
+    NotNcduFileError,
     parse_ncdu_json_file,
-    parse_ncdu_project_name,
     parse_ncdu_project_sample,
     path_str,
+    probe_ncdu_project_name,
 )
 from durep.reports import (
     render_html_report,
@@ -43,7 +44,7 @@ def estimate_input_size(path: Path) -> int:
     try:
         return path.stat().st_size
     except OSError:
-        log.warning("Could not stat input for scheduling: %s", path)
+        log.warning(f"Could not stat input for scheduling: {path}")
         return 0
 
 
@@ -55,12 +56,22 @@ def select_overview_scans(
     scans: Sequence[Path],
     metadata: dict[ProjectName, ProjectMetadata],
 ) -> list[Path]:
-    """Keep only scans of projects listed in the metadata, reading just each scan's root name."""
+    """Keep only scans of projects listed in the metadata, reading just each scan's root name.
+
+    JSON files that are not NCDU scans are skipped. Scans that are NCDU-shaped but otherwise
+    invalid are kept, so the full parse reports them.
+    """
     selected: list[Path] = []
     found: set[ProjectName] = set()
     excluded: set[str] = set()
+    unidentified = 0
     for scan in scans:
-        project = ProjectName(parse_ncdu_project_name(scan))
+        try:
+            project = ProjectName(probe_ncdu_project_name(scan))
+        except NotNcduFileError as exc:
+            log.debug(f"Skipping: {exc}")
+            unidentified += 1
+            continue
         if project in metadata:
             selected.append(scan)
             found.add(project)
@@ -69,13 +80,14 @@ def select_overview_scans(
 
     if excluded:
         log.info(
-            "Excluded %d project(s) not listed in metadata TSV: %s",
-            len(excluded),
-            ", ".join(sorted(excluded)),
+            f"Excluded {len(excluded)} project(s) not listed in metadata TSV:"
+            f" {', '.join(sorted(excluded))}"
         )
+    if unidentified:
+        log.info(f"Skipped {unidentified} .json file(s) that are not NCDU scans")
     for project in sorted(metadata.keys() - found):
-        log.warning("Project %r in metadata TSV has no scans in input directory", project)
-    log.info("Selected %d of %d scans", len(selected), len(scans))
+        log.warning(f"Project {project!r} in metadata TSV has no scans in input directory")
+    log.info(f"Selected {len(selected)} of {len(scans)} scans")
     return selected
 
 
@@ -88,12 +100,12 @@ def load_overview_samples(scans: list[Path], jobs: int) -> list[ProjectSample]:
     scheduled_scans = schedule_overview_scans(scans)
 
     for scan_path in scheduled_scans:
-        log.info("Queueing overview scan: %s", scan_path)
+        log.info(f"Queueing overview scan: {scan_path}")
 
     if jobs <= 1:
         return [load_overview_sample(scan_path) for scan_path in scheduled_scans]
 
-    log.info("Loading overview samples with %d worker processes", jobs)
+    log.info(f"Loading overview samples with {jobs} worker processes")
     try:
         with ProcessPoolExecutor(max_workers=jobs) as executor:
             try:
@@ -154,25 +166,25 @@ def write_detail_reports(
     if previous_run is not None:
         log.debug("Computing deltas")
         deltas = compute_directory_deltas(current_run, previous_run)
-        log.info("Computed deltas for %d paths", len(deltas))
+        log.info(f"Computed deltas for {len(deltas)} paths")
 
     text = render_text_report(current_run, previous_run, metrics, deltas, top_n)
 
-    log.debug("Building drilldown tree (top_n=%d)", top_n)
+    log.debug(f"Building drilldown tree ({top_n=})")
     drilldown = build_drilldown_tree(current_run.root, top_n, deltas)
 
     html = render_html_report(current_run, previous_run, drilldown, metrics, text)
 
     out_dir.mkdir(parents=True)
-    log.info("Output directory: %s", out_dir)
+    log.info(f"Output directory: {out_dir}")
 
     text_path = out_dir / "report.txt"
     text_path.write_text(text, encoding="utf-8")
-    log.info("Wrote text report: %s", text_path)
+    log.info(f"Wrote text report: {text_path}")
 
     html_path = out_dir / "report.html"
     html_path.write_text(html, encoding="utf-8")
-    log.info("Wrote HTML report: %s", html_path)
+    log.info(f"Wrote HTML report: {html_path}")
 
 
 def write_overview_reports(
@@ -189,12 +201,12 @@ def write_overview_reports(
     html = render_overview_html_report(series, text, samples, metadata)
 
     out_dir.mkdir(parents=True)
-    log.info("Output directory: %s", out_dir)
+    log.info(f"Output directory: {out_dir}")
 
     text_path = out_dir / "report.txt"
     text_path.write_text(text, encoding="utf-8")
-    log.info("Wrote text report: %s", text_path)
+    log.info(f"Wrote text report: {text_path}")
 
     html_path = out_dir / "report.html"
     html_path.write_text(html, encoding="utf-8")
-    log.info("Wrote HTML report: %s", html_path)
+    log.info(f"Wrote HTML report: {html_path}")

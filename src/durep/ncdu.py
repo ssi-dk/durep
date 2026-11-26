@@ -220,9 +220,38 @@ def parse_ncdu_project_sample(path: Path) -> ProjectSample:
     return parse_ncdu_file(path, parse_tree_to_project_sample)
 
 
-def parse_ncdu_project_name(path: Path) -> str:
-    """Return the project name of a scan, reading only up to its root directory entry."""
-    return parse_ncdu_file(path, parse_root_project_name)
+NOT_V1 = "NCDU JSON file is not a valid version 1 NCDU format file"
+
+
+class NotNcduFileError(ValueError):
+    """The file does not have the structure of an NCDU JSON export."""
+
+
+def probe_ncdu_project_name(path: Path) -> str:
+    """Return the project name of a scan, reading only up to the end of its root infoblock.
+
+    Only checks that the file has the shape of an NCDU export and that the root infoblock has a
+    name; all other validation is left to the full parse. Raises NotNcduFileError otherwise.
+    """
+    error_prefix = f"Not an NCDU JSON file: {path!s}: "
+    with path.open("rb") as handle:
+        try:
+            parser: Iterator[Event] = ijson.basic_parse(handle)
+            parse_preamble(parser)
+            for expected in ("start_array", "start_map"):
+                event, _ = next(parser)
+                if event != expected:
+                    raise NotNcduFileError("fourth element (root directory) is not a directory")
+            root_infoblock = read_flat_map(parser)
+        except (ijson.JSONError, StopIteration) as exc:
+            raise NotNcduFileError(error_prefix + "malformed JSON or truncated header") from exc
+        except NotNcduFileError as exc:
+            raise NotNcduFileError(error_prefix + str(exc)) from exc
+
+    root_name = root_infoblock.get("name")
+    if not isinstance(root_name, str) or root_name == "":
+        raise NotNcduFileError(error_prefix + "root infoblock has no non-empty string 'name'")
+    return project_name_from_root(str(Path(root_name)))
 
 
 def project_name_from_root(root_str: str) -> str:
@@ -230,28 +259,27 @@ def project_name_from_root(root_str: str) -> str:
     return root_str.rsplit("/", 1)[-1] or root_str
 
 
-def parse_root_project_name(parser: Iterator[Event], timestamp: datetime) -> str:
-    event, _ = next(parser)
-    if event != "start_array":
-        raise ValueError("Fourth field (root directory) is not a valid directory in NCDU format")
-    event, _ = next(parser)
-    if event != "start_map":
-        raise ValueError("Fourth field (root directory) is not a valid directory in NCDU format")
+def read_flat_map(parser: Iterator[Event]) -> dict[str, Any]:
+    """Read the rest of a map whose start_map has been consumed.
 
-    root_map: dict[str, Any] = {}
+    Scalar values are kept; nested arrays and maps are skipped entirely.
+    """
+    result: dict[str, Any] = {}
     key = ""
+    depth = 0
     for event, value in parser:
-        if event == "map_key":
-            key = value
-        elif event == "end_map":
-            break
-        else:
-            root_map[key] = value
-
-    root_name = get_required_name(root_map)
-    if not Path(root_name).is_absolute():
-        raise ValueError(f"Root node path must be absolute, got: {root_name}")
-    return project_name_from_root(str(Path(root_name)))
+        if event in ("start_map", "start_array"):
+            depth += 1
+        elif event in ("end_map", "end_array"):
+            if depth == 0:
+                return result
+            depth -= 1
+        elif depth == 0:
+            if event == "map_key":
+                key = value
+            else:
+                result[key] = value
+    raise NotNcduFileError("JSON ended inside an object")
 
 
 def parse_ncdu_file(path: Path, parse_body: Callable[..., Any], *parse_args: Any) -> Any:
@@ -268,6 +296,8 @@ def parse_ncdu_file(path: Path, parse_body: Callable[..., Any], *parse_args: Any
             raise ValueError(
                 error_prefix + "NCDU JSON file is not a valid version 1 NCDU format file"
             ) from exc
+        except NotNcduFileError as exc:
+            raise NotNcduFileError(error_prefix + str(exc)) from exc
         except ValueError as exc:
             if str(exc).startswith(error_prefix):
                 raise
@@ -361,34 +391,25 @@ def parse_tree_to_project_sample(parser: Iterator[Event], timestamp: datetime) -
     )
 
 
-def parse_header(parser: Iterator[Event], error_prefix: str) -> datetime:
-    # Expect: start_array, then number (major version), number (minor version), then metadata map
-    event, value = next(parser)
+def parse_preamble(parser: Iterator[Event]) -> dict[str, Any]:
+    """Consume `[<majorver>, <minorver>, <metadata>` and return the metadata's scalar fields."""
+    event, _ = next(parser)
     if event != "start_array":
-        raise ValueError(error_prefix + "NCDU JSON file is not a valid version 1 NCDU format file")
-
-    # Major version
+        raise NotNcduFileError(f"{NOT_V1}: top-level value is not an array")
     event, value = next(parser)
     if event != "number" or value != 1:
-        raise ValueError(error_prefix + "NCDU JSON file is not a valid version 1 NCDU format file")
-
-    # Minor version — just consume it
-    next(parser)
-
-    # Metadata map — accumulate into a dict
-    event, value = next(parser)
+        raise NotNcduFileError(f"{NOT_V1}: first element (major version) is not 1")
+    event, _ = next(parser)
+    if event != "number":
+        raise NotNcduFileError(f"{NOT_V1}: second element (minor version) is not a number")
+    event, _ = next(parser)
     if event != "start_map":
-        raise ValueError(error_prefix + "Does not contain expected timestamp field in metadata")
+        raise NotNcduFileError(f"{NOT_V1}: third element (metadata) is not an object")
+    return read_flat_map(parser)
 
-    metadata: dict[str, Any] = {}
-    key = ""
-    for event, value in parser:
-        if event == "map_key":
-            key = value
-        elif event == "end_map":
-            break
-        else:
-            metadata[key] = value
+
+def parse_header(parser: Iterator[Event], error_prefix: str) -> datetime:
+    metadata = parse_preamble(parser)
 
     if "timestamp" not in metadata:
         raise ValueError(error_prefix + "Does not contain expected timestamp field in metadata")

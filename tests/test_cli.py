@@ -347,6 +347,29 @@ def test_overview_metadata_excluded_scans_are_not_fully_parsed(tmp_path: Path) -
     assert exit_code == 0
 
 
+def test_overview_metadata_skips_non_ncdu_json_files(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    scans = tmp_path / "scans"
+    scans.mkdir()
+    write_ncdu(scans / "a.json", root_name="/proj_a")
+    (scans / "config.json").write_text('{"some": "config"}', encoding="utf-8")
+    (scans / "list.json").write_text("[1, 2, {}]", encoding="utf-8")
+    (scans / "garbage.json").write_text("not json at all", encoding="utf-8")
+    (scans / "no_root.json").write_text('[1, 2, {"a": {"b": 1}}, {"name": "/x"}]', "utf-8")
+    meta = write_metadata_tsv(tmp_path, ["proj_a"])
+    out_dir = tmp_path / "out"
+
+    with caplog.at_level(logging.INFO, logger="durep"):
+        exit_code = run(
+            ["overview", str(scans), "--out-dir", str(out_dir), "--metadata-tsv-path", str(meta)]
+        )
+
+    assert exit_code == 0
+    assert "proj_a" in (out_dir / "report.txt").read_text(encoding="utf-8")
+    assert "Skipped 4 .json file(s) that are not NCDU scans" in caplog.text
+
+
 def test_overview_rejects_metadata_matching_no_scans(tmp_path: Path) -> None:
     scans = tmp_path / "scans"
     scans.mkdir()
@@ -431,6 +454,7 @@ def test_overview_rejects_missing_timestamp(tmp_path: Path) -> None:
     scan.write_text(json.dumps(no_ts), encoding="utf-8")
     meta = write_metadata_tsv(tmp_path, ["data"])
 
+    # The scan is NCDU-shaped and its project is listed, so it is not skipped but fails loudly
     with pytest.raises(ValueError, match="timestamp"):
         run(
             [
