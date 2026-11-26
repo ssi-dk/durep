@@ -58,7 +58,7 @@ class OverviewArgs:
         if raw_tsv is None:
             log.debug("--metadata-tsv-path was not passed")
         else:
-            log.debug("--metadata-tsv-path: %s", raw_tsv)
+            log.debug(f"--metadata-tsv-path: {raw_tsv}")
         return cls(
             input_dir=Path(namespace.input_dir),
             out_dir=Path(namespace.out_dir),
@@ -217,7 +217,7 @@ def run(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     namespace = parser.parse_args(argv)
     configure_logging(namespace.log_level)
-    log.info("Starting durep version %s", version_info())
+    log.info(f"Starting durep version {version_info()}")
     if git_repo_is_dirty:
         log.warning("This build of durep was created from a dirty Git repository.")
     if namespace.subcommand is None:

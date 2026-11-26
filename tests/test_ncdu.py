@@ -11,12 +11,13 @@ from durep.ncdu import (
     CollapsedNode,
     NcduDir,
     NcduFile,
+    NotNcduFileError,
     UncompressedStats,
     apply_node_budget,
     full_path,
     parse_ncdu_json_file,
-    parse_ncdu_project_name,
     parse_ncdu_project_sample,
+    probe_ncdu_project_name,
 )
 
 
@@ -704,7 +705,7 @@ def test_inline_collapse_root_is_never_collapsed(tmp_path: Path) -> None:
     assert run.root.basename == "/"
 
 
-def test_parse_ncdu_project_name_uses_root_basename(tmp_path: Path) -> None:
+def test_probe_ncdu_project_name_uses_root_basename(tmp_path: Path) -> None:
     source = tmp_path / "scan.json"
     root_tree = [
         {"name": "/projects/alder/", "asize": 1},
@@ -712,30 +713,69 @@ def test_parse_ncdu_project_name_uses_root_basename(tmp_path: Path) -> None:
     ]
     write_ncdu_json(source, root_tree)
 
-    assert parse_ncdu_project_name(source) == "alder"
-    assert parse_ncdu_project_name(source) == parse_ncdu_project_sample(source).project
+    assert probe_ncdu_project_name(source) == "alder"
+    assert probe_ncdu_project_name(source) == parse_ncdu_project_sample(source).project
 
 
-def test_parse_ncdu_project_name_stops_after_root_entry(tmp_path: Path) -> None:
+def test_probe_ncdu_project_name_stops_after_root_entry(tmp_path: Path) -> None:
     source = tmp_path / "scan.json"
     valid_prefix = json.dumps([1, 2, {"timestamp": 1700000000}, [{"name": "/data/proj"}]])
-    # Truncated after the root entry: a full parse would fail, the peek must not.
+    # Truncated after the root entry: a full parse would fail, the probe must not.
     source.write_text(valid_prefix[: valid_prefix.index("}]]") + 1] + ", {", encoding="utf-8")
 
-    assert parse_ncdu_project_name(source) == "proj"
+    assert probe_ncdu_project_name(source) == "proj"
 
 
-def test_parse_ncdu_project_name_rejects_relative_root_name(tmp_path: Path) -> None:
+def test_probe_ncdu_project_name_finds_name_after_other_fields(tmp_path: Path) -> None:
     source = tmp_path / "scan.json"
-    write_ncdu_json(source, [{"name": "relative"}])
+    metadata = {"extra": {"nested": [1, {"name": "/decoy"}]}, "progname": "ncdu"}
+    root = [{"asize": 1, "dsize": 4096, "name": "/data/proj"}]
+    source.write_text(json.dumps([1, 2, metadata, root]), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="must be absolute"):
-        parse_ncdu_project_name(source)
+    assert probe_ncdu_project_name(source) == "proj"
 
 
-def test_parse_ncdu_project_name_rejects_file_as_root(tmp_path: Path) -> None:
+def test_probe_ncdu_project_name_does_not_validate_beyond_shape(tmp_path: Path) -> None:
+    # No timestamp and a relative root name: invalid scan, but still an NCDU file.
     source = tmp_path / "scan.json"
-    write_ncdu_json(source, {"name": "/data"})  # type: ignore[arg-type]
+    source.write_text(json.dumps([1, 2, {}, [{"name": "rel/proj"}]]), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="not a valid directory"):
-        parse_ncdu_project_name(source)
+    assert probe_ncdu_project_name(source) == "proj"
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "not json",
+        '{"name": "/data"}',
+        "[1, 2, {}]",
+        '[2, 0, {}, [{"name": "/data"}]]',
+        '[1, "2", {}, [{"name": "/data"}]]',
+        '[1, 2, [], [{"name": "/data"}]]',
+        '[1, 2, {}, {"name": "/data"}]',
+        '[1, 2, {}, [{"asize": 1}]]',
+        '[1, 2, {}, [{"name": ""}]]',
+    ],
+)
+def test_probe_ncdu_project_name_rejects_non_ncdu_files(tmp_path: Path, content: str) -> None:
+    source = tmp_path / "other.json"
+    source.write_text(content, encoding="utf-8")
+
+    with pytest.raises(NotNcduFileError, match="Not an NCDU JSON file"):
+        probe_ncdu_project_name(source)
+
+
+def test_parse_ncdu_file_skips_nested_metadata_values(tmp_path: Path) -> None:
+    source = tmp_path / "scan.json"
+    metadata = {"extra": {"timestamp": 1}, "timestamp": 1700000000}
+    source.write_text(json.dumps([1, 2, metadata, [{"name": "/data"}]]), encoding="utf-8")
+
+    assert parse_ncdu_project_sample(source).timestamp.timestamp() == 1700000000
+
+
+def test_parse_ncdu_file_raises_not_ncdu_for_wrong_shape(tmp_path: Path) -> None:
+    source = tmp_path / "other.json"
+    source.write_text('{"some": "config"}', encoding="utf-8")
+
+    with pytest.raises(NotNcduFileError, match="Invalid NCDU JSON file at"):
+        parse_ncdu_project_sample(source)
